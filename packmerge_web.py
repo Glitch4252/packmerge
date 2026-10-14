@@ -101,7 +101,7 @@ def _run_worker(mode):
 
 # ------------------------------------------------------------ file browse
 def browse(path):
-    start = os.path.expanduser("~")
+    start = os.path.expanduser("~"), "Downloads"
     p = os.path.abspath(path) if path else start
     if not os.path.isdir(p):
         p = start
@@ -305,7 +305,7 @@ PAGE = """<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>packmerge</title>
+<title>Packmerge</title>
 <link rel="icon" type="image/png" href="/icon.png">
 <link rel="stylesheet" href="/custom.css">
 <script src="/custom.js" defer></script>
@@ -425,7 +425,7 @@ ul.pick li.sel .badge{background:rgba(255,255,255,.22); color:#fff}
 </head>
 <body>
 <div class="wrap">
-  <h1 class="brand"><img src="/icon.png" alt="">packmerge</h1>
+  <h1 class="brand"><img src="/icon.png" alt="">Packmerge</h1>
   <p class="subtitle">Turn a stack of resource packs into one.</p>
 
   <div class="card">
