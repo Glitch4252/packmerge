@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 packmerge_web -- a browser UI for packmerge, served from your own machine.
 
@@ -404,11 +403,11 @@ ul.pick li.sel .badge{background:rgba(255,255,255,.22); color:#fff}
   <div class="card">
     <h2>PACK</h2>
     <label class="f" for="packName">Name</label>
-    <input type="text" id="packName" placeholder="MyFrankenpack" autocomplete="off">
+    <input type="text" id="packName" placeholder="My pack" autocomplete="off">
     <label class="f" for="output">Output file</label>
     <div class="row">
-      <div class="grow"><input type="text" id="output" placeholder="MyFrankenpack.zip" autocomplete="off"></div>
-      <button id="browseOutput">Browse&hellip;</button>
+      <div class="grow"><input type="text" id="output" placeholder="MyPack.zip" autocomplete="off"></div>
+      <button id="browseOutput">Browse</button>
     </div>
     <label class="f" for="desc">Description</label>
     <input type="text" id="desc" autocomplete="off">
@@ -426,8 +425,8 @@ ul.pick li.sel .badge{background:rgba(255,255,255,.22); color:#fff}
     <h2>SOURCES &nbsp;&mdash;&nbsp; bottom of the list wins</h2>
     <ul class="pick" id="srcList"></ul>
     <div class="src-actions">
-      <button id="addUrl">Add URL&hellip;</button>
-      <button id="addLocal">Add local file&hellip;</button>
+      <button id="addUrl">Add URL</button>
+      <button id="addLocal">Add local file</button>
       <button id="removeSrc">Remove</button>
       <button id="moveUp">Move up</button>
       <button id="moveDown">Move down</button>
@@ -442,7 +441,7 @@ ul.pick li.sel .badge{background:rgba(255,255,255,.22); color:#fff}
       <p class="hint">Force a specific file to come from a specific pack, beating the priority order above. Useful when you like one pack overall but prefer another pack's version of a single texture or model.</p>
       <ul class="pick" id="ovList"></ul>
       <div class="src-actions">
-        <button id="addOv">Add&hellip;</button>
+        <button id="addOv">Add</button>
         <button id="removeOv">Remove</button>
       </div>
     </div>
@@ -451,7 +450,7 @@ ul.pick li.sel .badge{background:rgba(255,255,255,.22); color:#fff}
       <p class="hint">Drop files or whole folders from the merged pack. Useful for stripping parts of a pack you don't want, like its OptiFine extras. End a path with / to drop an entire folder.</p>
       <ul class="pick" id="exList"></ul>
       <div class="src-actions">
-        <button id="addEx">Add&hellip;</button>
+        <button id="addEx">Add</button>
         <button id="removeEx">Remove</button>
       </div>
     </div>
