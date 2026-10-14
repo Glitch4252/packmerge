@@ -173,11 +173,28 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _icon(self):
+        path = os.path.join(HERE, "icon.png")
+        try:
+            with open(path, "rb") as f:
+                body = f.read()
+        except OSError:
+            self.send_error(404)
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "image/png")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "max-age=86400")
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
         qs = urllib.parse.parse_qs(parsed.query)
         if parsed.path == "/":
             return self._html()
+        if parsed.path in ("/icon.png", "/favicon.ico"):
+            return self._icon()
         if parsed.path == "/api/state":
             return self._json(load_state())
         if parsed.path == "/api/log":
@@ -230,14 +247,17 @@ class Handler(BaseHTTPRequestHandler):
                 "hint": "Set \"repo\" in packmerge-update.json next to the "
                         "script (\"username/reponame\")."})
         try:
-            action = json.loads(body).get("action", "check")
+            payload = json.loads(body)
         except Exception:
-            action = "check"
+            payload = {}
+        action = payload.get("action", "check")
+        overwrite = bool(payload.get("overwrite", False))
         if action == "install":
             res = packmerge_update.check()
             if not res.get("ok"):
                 return self._json({"ok": False, "error": res.get("error")})
-            ok, msg = packmerge_update.install(res)
+            ok, msg = packmerge_update.install(
+                res, overwrite_modified=overwrite)
             restarting = ok and bool(res.get("changed"))
             if restarting:
                 # let the response flush, then re-exec into the new code
@@ -261,6 +281,7 @@ PAGE = """<!DOCTYPE html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>packmerge</title>
+<link rel="icon" type="image/png" href="/icon.png">
 <style>
 :root{
   --bg:#1e1e1e; --panel:#2d2d30; --raised:#3a3a3d; --fg:#f2f2f2;
@@ -275,6 +296,8 @@ body{
 }
 .wrap{max-width:940px; margin:0 auto; padding:28px 20px 60px}
 h1{font-size:26px; margin:0 0 2px}
+h1.brand{display:flex; align-items:center; gap:11px}
+h1.brand img{width:34px; height:34px; border-radius:8px}
 .subtitle{color:var(--dim); margin:0 0 22px}
 .card{
   border:1px solid var(--border); border-radius:10px;
@@ -375,7 +398,7 @@ ul.pick li.sel .badge{background:rgba(255,255,255,.22); color:#fff}
 </head>
 <body>
 <div class="wrap">
-  <h1>packmerge</h1>
+  <h1 class="brand"><img src="/icon.png" alt="">packmerge</h1>
   <p class="subtitle">Turn a stack of resource packs into one.</p>
 
   <div class="card">
@@ -825,8 +848,11 @@ async function checkAppUpdates(){
       (d.error === "not configured" ? d.hint : d.error));
     return;
   }
-  if(!d.changed.length){
-    setStatus(`App is up to date (v${d.current}).`);
+  const changed = d.changed || [], modified = d.modified || [];
+  if(!changed.length){
+    setStatus(modified.length
+      ? `App is up to date (v${d.current}); your edits to ${modified.join(", ")} are untouched.`
+      : `App is up to date (v${d.current}).`);
     return;
   }
   setStatus("Ready.");
@@ -837,42 +863,59 @@ async function checkAppUpdates(){
   body.appendChild(p);
   const ul = document.createElement("ul");
   ul.style.margin = "0 0 6px 18px";
-  d.changed.forEach(f=>{
+  changed.forEach(f=>{
     const li = document.createElement("li");
     li.textContent = f; li.style.fontFamily = "monospace";
     ul.appendChild(li);
   });
   body.appendChild(ul);
-  addButtons(overlay, [
-    ["Cancel","",()=>closeModal(overlay)],
-    ["Install & restart","accent", async ()=>{
-      closeModal(overlay);
-      setStatus("Installing app update…");
-      let r;
-      try{ r = await api("POST","/api/app-update",{action:"install"}); }
-      catch(e){
-        setStatus("Ready.");
-        errorModal("Install failed: lost connection to the server.");
-        return;
-      }
-      if(!r.ok){
-        setStatus("Ready.");
-        errorModal("Install failed: " + (r.error || r.message || "unknown error"));
-        return;
-      }
-      if(r.restarting){
-        const ov2 = openModalShell("Update installed");
-        const b2 = ov2.querySelector(".mbody");
-        const p2 = document.createElement("p");
-        p2.textContent = r.message + " The server is restarting — this page will reload in a moment.";
-        b2.appendChild(p2);
-        setStatus("Restarting…");
-        setTimeout(()=> location.reload(), 4500);
-      } else {
-        setStatus(r.message);
-      }
-    }],
-  ]);
+  if(modified.length){
+    const pm = document.createElement("p");
+    pm.textContent = "These have your own edits and will be kept as-is " +
+      "unless you overwrite them:";
+    body.appendChild(pm);
+    const ulm = document.createElement("ul");
+    ulm.style.margin = "0 0 6px 18px";
+    modified.forEach(f=>{
+      const li = document.createElement("li");
+      li.textContent = f; li.style.fontFamily = "monospace";
+      ulm.appendChild(li);
+    });
+    body.appendChild(ulm);
+  }
+  const buttons = [["Cancel","",()=>closeModal(overlay)]];
+  if(modified.length)
+    buttons.push(["Overwrite my edits","danger",()=>doAppInstall(true, overlay)]);
+  buttons.push(["Install & restart","accent",()=>doAppInstall(false, overlay)]);
+  addButtons(overlay, buttons);
+}
+
+async function doAppInstall(overwrite, overlay){
+  closeModal(overlay);
+  setStatus("Installing app update…");
+  let r;
+  try{ r = await api("POST","/api/app-update",{action:"install", overwrite}); }
+  catch(e){
+    setStatus("Ready.");
+    errorModal("Install failed: lost connection to the server.");
+    return;
+  }
+  if(!r.ok){
+    setStatus("Ready.");
+    errorModal("Install failed: " + (r.error || r.message || "unknown error"));
+    return;
+  }
+  if(r.restarting){
+    const ov2 = openModalShell("Update installed");
+    const b2 = ov2.querySelector(".mbody");
+    const p2 = document.createElement("p");
+    p2.textContent = r.message + " The server is restarting — this page will reload in a moment.";
+    b2.appendChild(p2);
+    setStatus("Restarting…");
+    setTimeout(()=> location.reload(), 4500);
+  } else {
+    setStatus(r.message);
+  }
 }
 
 async function run(mode){
@@ -969,6 +1012,12 @@ def _auto_update_at_startup(args):
     except Exception:
         return
     if not res.get("ok") or not res.get("changed"):
+        return
+    if res.get("modified"):
+        # unattended startup must never destroy local edits; the user can
+        # resolve this from the App updates button
+        print("[packmerge-web] skipping auto-update; you have local edits "
+              "to: " + ", ".join(res["modified"]))
         return
     try:
         ok, _msg = packmerge_update.install(res)

@@ -17,6 +17,8 @@ to raw.githubusercontent.com). It is never required for public repos.
 Usage:
     python3 packmerge_update.py --check     # report what would change
     python3 packmerge_update.py --install   # download and apply the update
+    python3 packmerge_update.py --install --force  # also overwrite files
+                                            # you edited locally
     python3 packmerge_update.py --make-version  # (maintainer) regenerate
                                             # version.json before pushing
 """
@@ -134,20 +136,37 @@ def remote_version_info(timeout=20, retries=2):
 
 
 def check(timeout=20, retries=2):
-    """Compare local files to the repo. Returns a result dict."""
+    """Compare local files to the repo. Returns a result dict.
+
+    changed: files that differ from the repo but match what was last
+        installed (clean updates).
+    modified: files that differ from BOTH the repo and the last-installed
+        version (the user edited them locally). These are never touched
+        without explicit consent.
+    """
     try:
         info, repo, branch, token = remote_version_info(timeout, retries)
     except Exception as e:
         return {"ok": False, "error": str(e)}
     local = local_version()
+    installed_files = local.get("files", {})
+    has_record = bool(installed_files)
     remote_files = info.get("files", {})
-    changed = []
+    changed, modified = [], []
     for name, digest in remote_files.items():
         if "/" in name or "\\" in name or name not in MANAGED_FILES:
             continue  # never write outside the script folder
         p = os.path.join(HERE, name)
-        if not os.path.exists(p) or sha256_file(p) != digest:
-            changed.append(name)
+        if not os.path.exists(p):
+            changed.append(name)  # missing entirely: install it
+            continue
+        local_digest = sha256_file(p)
+        if local_digest == digest:
+            continue  # up to date
+        if not has_record or installed_files.get(name) == local_digest:
+            changed.append(name)  # clean update (or no install record yet)
+        else:
+            modified.append(name)  # user edited it locally
     return {
         "ok": True,
         "repo": repo,
@@ -155,17 +174,31 @@ def check(timeout=20, retries=2):
         "current": local.get("version", "0"),
         "remote": info.get("version", "?"),
         "changed": sorted(changed),
+        "modified": sorted(modified),
         "_files": remote_files,
         "_token": token,
     }
 
 
-def install(result):
-    """Download changed files and swap them in. Returns (ok, message)."""
+def install(result, overwrite_modified=False):
+    """Download changed files and swap them in. Returns (ok, message).
+
+    Files the user edited locally (result["modified"]) are kept as-is
+    unless overwrite_modified is True; they are reported either way.
+    """
     if not result.get("ok"):
         return False, result.get("error", "check failed")
-    changed = result.get("changed", [])
+    changed = list(result.get("changed", []))
+    modified = list(result.get("modified", []))
+    skipped = []
+    if modified and not overwrite_modified:
+        skipped = modified
+    else:
+        changed = sorted(set(changed) | set(modified))
     if not changed:
+        if skipped:
+            return True, ("Already up to date. Kept your edits to: "
+                          + ", ".join(skipped) + ".")
         return True, "Already up to date."
     repo = result["repo"]
     branch = result["branch"]
@@ -196,8 +229,11 @@ def install(result):
             except OSError:
                 pass
         return False, f"Update failed: {e}"
-    return True, (f"Updated {len(changed)} file(s) to version "
-                  f"{result['remote']}: {', '.join(changed)}")
+    msg = (f"Updated {len(changed)} file(s) to version "
+           f"{result['remote']}: {', '.join(changed)}")
+    if skipped:
+        msg += f". Kept your edits to: {', '.join(skipped)}"
+    return True, msg
 
 
 def restart_into(script):
@@ -234,16 +270,25 @@ def main(argv):
               f"({doc['version']}, {len(doc['files'])} files)")
         return
     if "--install" in argv:
+        force = "--force" in argv
         res = check()
         if not res.get("ok"):
             sys.exit(f"[packmerge-update] {res.get('error')}")
-        if not res["changed"]:
+        if res.get("modified") and not force:
+            print(f"[packmerge-update] keeping your edits to: "
+                  f"{', '.join(res['modified'])}")
+            print("[packmerge-update] add --force to overwrite them with "
+                  "the repo version")
+        if not res["changed"] and not (res.get("modified") and force):
             print(f"[packmerge-update] already up to date "
                   f"(version {res['current']}).")
             return
-        print(f"[packmerge-update] {res['current']} -> {res['remote']}: "
-              f"{', '.join(res['changed'])}")
-        ok, msg = install(res)
+        if res["changed"] or force:
+            show = sorted(set(res["changed"])
+                          | (set(res["modified"]) if force else set()))
+            print(f"[packmerge-update] {res['current']} -> {res['remote']}: "
+                  f"{', '.join(show)}")
+        ok, msg = install(res, overwrite_modified=force)
         print(f"[packmerge-update] {msg}")
         sys.exit(0 if ok else 1)
     # default: --check

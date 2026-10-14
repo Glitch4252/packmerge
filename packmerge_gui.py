@@ -853,25 +853,65 @@ class PackmergeGui(tk.Tk):
                                  f"Check failed:\n{res.get('error')}",
                                  parent=self)
             return
-        if not res["changed"]:
+        changed, modified = res["changed"], res.get("modified", [])
+        if not changed and not modified:
             self.status_var.set(f"App is up to date (v{res['current']}).")
             return
+        if not changed:
+            self.status_var.set(
+                f"App is up to date (v{res['current']}); your edits to "
+                f"{', '.join(modified)} are untouched.")
+            return
         self.status_var.set("Ready.")
-        files = "\n".join(res["changed"])
-        if messagebox.askyesno(
-                "App update available",
-                f"Version {res['current']} → {res['remote']}.\n\n"
-                f"Files to replace:\n{files}\n\n"
-                "Install now? The app will restart.",
-                parent=self):
-            self.status_var.set("Installing app update…")
-            self.update_idletasks()
-            threading.Thread(target=self._app_update_install_worker,
-                             args=(res,), daemon=True).start()
+        choice = self._app_update_choice_dialog(
+            res["current"], res["remote"], changed, modified)
+        if not choice:
+            return
+        self.status_var.set("Installing app update…")
+        self.update_idletasks()
+        threading.Thread(target=self._app_update_install_worker,
+                         args=(res, choice == "overwrite"), daemon=True).start()
 
-    def _app_update_install_worker(self, res):
+    def _app_update_choice_dialog(self, current, remote, changed, modified):
+        """Returns "keep", "overwrite", or None (cancel)."""
+        dlg = tk.Toplevel(self)
+        dlg.title("App update available")
+        dlg.configure(bg=BG)
+        dlg.transient(self)
+        dlg.grab_set()
+        dlg.resizable(False, False)
+        ttk.Label(dlg, text=f"Version {current} → {remote}.").pack(
+            padx=20, pady=(16, 4))
+        ttk.Label(dlg, text="Files to update:\n" + "\n".join(changed),
+                  style="Dim.TLabel", justify="left").pack(padx=20, pady=4)
+        if modified:
+            ttk.Label(
+                dlg,
+                text="These have your own edits and will be kept as-is\n"
+                     "unless you overwrite them:\n" + "\n".join(modified),
+                style="Dim.TLabel", justify="left").pack(padx=20, pady=4)
+        choice = {"v": None}
+
+        def pick(v):
+            choice["v"] = v
+            dlg.destroy()
+
+        btns = ttk.Frame(dlg)
+        btns.pack(padx=20, pady=16)
+        if modified:
+            ttk.Button(btns, text="Overwrite my edits",
+                       command=lambda: pick("overwrite")).pack(side="left")
+        ttk.Button(btns, text="Install (keep my edits)",
+                   style="Accent.TButton",
+                   command=lambda: pick("keep")).pack(side="left", padx=8)
+        ttk.Button(btns, text="Cancel",
+                   command=dlg.destroy).pack(side="left")
+        self.wait_window(dlg)
+        return choice["v"]
+
+    def _app_update_install_worker(self, res, overwrite):
         import packmerge_update
-        ok, msg = packmerge_update.install(res)
+        ok, msg = packmerge_update.install(res, overwrite_modified=overwrite)
         self.after(0,
                    lambda: self._app_update_install_done(ok, msg, res))
 
