@@ -3,25 +3,22 @@
 Merge Minecraft: Java Edition resource packs into a single pack, deterministically,
 so updating is one command instead of an afternoon of manual frankensteining.
 
-Prefer buttons to JSON? Two frontends, same engine:
-- `python3 packmerge_gui.py` — a small desktop app, dark, Apple-HIG-inspired,
-  stdlib tkinter only (`sudo pacman -S tk` / `sudo apt install python3-tk`
-  if it's missing).
-- `python3 packmerge_web.py` — the same UI in your browser, served from your
+Prefer buttons to JSON? There's a browser frontend with the same engine:
+- `python3 packmerge_web.py` — the UI in your browser, served from your
   own machine (no hosting, no accounts; stdlib only, zero dependencies).
   Opens automatically at http://127.0.0.1:8471. Add `--host 0.0.0.0` to
   reach it from other devices on your network, e.g. your phone on WiFi.
 
-Both edit everything (sources, overrides, excludes), check for updates, and
-build with live log output. They share one state file next to the scripts
-and autosave every change, so there's no save/open workflow — what you see
+It edits everything (sources, overrides, excludes), checks for updates, and
+builds with live log output. It shares one state file next to the scripts
+and autosaves every change, so there's no save/open workflow — what you see
 is what builds, always targeting the latest release.
 
 ## Self-updates
 
 packmerge can update itself from its GitHub repo — no re-downloading zips:
 
-- Web UI / desktop app: hit the **App updates** button.
+- Web UI: hit the **App updates** button.
 - CLI: `python3 packmerge.py --self-update`
 
 Setup (one time): create a repo, push these files plus `version.json`,
@@ -37,7 +34,7 @@ launched at login) and installs them before serving, restarting itself
 into the new code. A failed check never blocks startup. Pass
 `--no-auto-update` to skip it. Files you edited yourself are detected
 (local edits vs. the last-installed version): they are never overwritten
-silently — the web UI and desktop GUI ask whether to keep your edits or
+silently — the web UI asks whether to keep your edits or
 take the repo version, the CLI keeps them unless you pass `--force`, and
 the startup check skips the update entirely until you resolve it.
 

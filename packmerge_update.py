@@ -19,6 +19,8 @@ Usage:
     python3 packmerge_update.py --install   # download and apply the update
     python3 packmerge_update.py --install --force  # also overwrite files
                                             # you edited locally
+    python3 packmerge_update.py --publish 2026.10.14.7  # regen version.json,
+                                            # commit, push (one step)
     python3 packmerge_update.py --make-version  # (maintainer) regenerate
                                             # version.json before pushing
 """
@@ -36,7 +38,6 @@ LOCAL_VERSION_PATH = os.path.join(HERE, "version.json")
 # files managed by the updater (never touches state, cache, or lockfiles)
 MANAGED_FILES = [
     "packmerge.py",
-    "packmerge_gui.py",
     "packmerge_web.py",
     "packmerge_update.py",
     "packmerge-web-start.bat",
@@ -258,6 +259,49 @@ def make_version_file(version):
     return doc
 
 
+def publish(version):
+    """One-step publish: regen version.json, commit, push.
+
+    Eliminates the classic failure modes (forgetting version.json,
+    committing it separately from the files, hashing before editing).
+    """
+    import subprocess as sp
+    doc = make_version_file(version)
+    files = sorted(doc["files"].keys()) + ["version.json"]
+    files = [f for f in files if os.path.exists(os.path.join(HERE, f))]
+    try:
+        sp.run(["git", "add"] + files, cwd=HERE, check=True,
+               capture_output=True, text=True)
+    except FileNotFoundError:
+        sys.exit("[packmerge-update] git not found on PATH. Install Git for "
+                 "Windows or push via the GitHub website.")
+    except sp.CalledProcessError as e:
+        sys.exit(f"[packmerge-update] git add failed: {e.stderr.strip()}")
+    # anything actually staged? (untracked side files don't count)
+    r = sp.run(["git", "diff", "--cached", "--quiet"], cwd=HERE)
+    if r.returncode == 0:
+        print("[packmerge-update] nothing changed.")
+        return
+    r = sp.run(["git", "commit", "-m", version], cwd=HERE,
+               capture_output=True, text=True)
+    if r.returncode != 0:
+        sys.exit("[packmerge-update] git commit failed:\n"
+                 + r.stderr.strip()
+                 + "\n(hint: git needs user.name and user.email set once: "
+                 'git config --global user.name "you" && '
+                 'git config --global user.email "you@example.com")')
+    print(f"[packmerge-update] committed {version}, pushing…")
+    r = sp.run(["git", "push"], cwd=HERE, capture_output=True, text=True)
+    if r.returncode != 0 and "no upstream branch" in r.stderr:
+        branch = sp.run(["git", "branch", "--show-current"], cwd=HERE,
+                        capture_output=True, text=True).stdout.strip() or "main"
+        r = sp.run(["git", "push", "--set-upstream", "origin", branch],
+                   cwd=HERE, capture_output=True, text=True)
+    if r.returncode != 0:
+        sys.exit("[packmerge-update] git push failed:\n" + r.stderr.strip())
+    print(f"[packmerge-update] pushed {version}.")
+
+
 def main(argv):
     if "--make-version" in argv:
         i = argv.index("--make-version")
@@ -268,6 +312,14 @@ def main(argv):
         doc = make_version_file(version)
         print(f"[packmerge-update] wrote version.json "
               f"({doc['version']}, {len(doc['files'])} files)")
+        return
+    if "--publish" in argv:
+        i = argv.index("--publish")
+        try:
+            version = argv[i + 1]
+        except IndexError:
+            sys.exit("usage: packmerge_update.py --publish VERSION")
+        publish(version)
         return
     if "--install" in argv:
         force = "--force" in argv
