@@ -1040,11 +1040,8 @@ function finishRun(rc, text){
       seenLog = d.lines.length;
       $("log").textContent = d.lines.join("");
       $("log").scrollTop = $("log").scrollHeight;
-<<<<<<< HEAD
-=======
     } else {
       $("log").textContent = "No log output yet — run a check or build and the output will appear here.";
->>>>>>> a97e7408aa1b5ea1b0e519fd3256e7603d8d4b76
     }
   }catch(e){}
 })();
