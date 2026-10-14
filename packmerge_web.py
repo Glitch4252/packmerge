@@ -959,6 +959,12 @@ def main():
     if not os.path.exists(PACKMERGE_PY):
         sys.exit(f"packmerge.py not found next to this script: {PACKMERGE_PY}")
 
+    if sys.stdout is None:
+        # windowed launch (pyw/pythonw has no console): printing would crash
+        # the server instantly, so send output to a log file instead
+        logf = open(os.path.join(HERE, "packmerge-web.log"), "a", buffering=1)
+        sys.stdout = sys.stderr = logf
+
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     url = f"http://{args.host}:{args.port}"
     print(f"[packmerge-web] serving at {url}  (Ctrl+C to stop)")
