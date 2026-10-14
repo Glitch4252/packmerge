@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 packmerge_web -- a browser UI for packmerge, served from your own machine.
 
@@ -187,6 +188,28 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _custom(self, name, content_type):
+        """Serve an optional user overlay file (custom.css / custom.js).
+
+        These are never touched by the updater: the user's own tweaks live
+        here, so packmerge_web.py itself can stay pristine and keep updating.
+        Returns 204 when the file doesn't exist.
+        """
+        path = os.path.join(HERE, name)
+        try:
+            with open(path, "rb") as f:
+                body = f.read()
+        except OSError:
+            self.send_response(204)
+            self.end_headers()
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "max-age=3600")
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
         qs = urllib.parse.parse_qs(parsed.query)
@@ -194,6 +217,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._html()
         if parsed.path in ("/icon.png", "/favicon.ico"):
             return self._icon()
+        if parsed.path == "/custom.css":
+            return self._custom("custom.css", "text/css; charset=utf-8")
+        if parsed.path == "/custom.js":
+            return self._custom("custom.js", "text/javascript; charset=utf-8")
         if parsed.path == "/api/state":
             return self._json(load_state())
         if parsed.path == "/api/log":
@@ -281,6 +308,8 @@ PAGE = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>packmerge</title>
 <link rel="icon" type="image/png" href="/icon.png">
+<link rel="stylesheet" href="/custom.css">
+<script src="/custom.js" defer></script>
 <style>
 :root{
   --bg:#1e1e1e; --panel:#2d2d30; --raised:#3a3a3d; --fg:#f2f2f2;
@@ -403,11 +432,11 @@ ul.pick li.sel .badge{background:rgba(255,255,255,.22); color:#fff}
   <div class="card">
     <h2>PACK</h2>
     <label class="f" for="packName">Name</label>
-    <input type="text" id="packName" placeholder="My pack" autocomplete="off">
+    <input type="text" id="packName" placeholder="MyFrankenpack" autocomplete="off">
     <label class="f" for="output">Output file</label>
     <div class="row">
-      <div class="grow"><input type="text" id="output" placeholder="MyPack.zip" autocomplete="off"></div>
-      <button id="browseOutput">Browse</button>
+      <div class="grow"><input type="text" id="output" placeholder="MyFrankenpack.zip" autocomplete="off"></div>
+      <button id="browseOutput">Browse&hellip;</button>
     </div>
     <label class="f" for="desc">Description</label>
     <input type="text" id="desc" autocomplete="off">
@@ -425,8 +454,8 @@ ul.pick li.sel .badge{background:rgba(255,255,255,.22); color:#fff}
     <h2>SOURCES &nbsp;&mdash;&nbsp; bottom of the list wins</h2>
     <ul class="pick" id="srcList"></ul>
     <div class="src-actions">
-      <button id="addUrl">Add URL</button>
-      <button id="addLocal">Add local file</button>
+      <button id="addUrl">Add URL&hellip;</button>
+      <button id="addLocal">Add local file&hellip;</button>
       <button id="removeSrc">Remove</button>
       <button id="moveUp">Move up</button>
       <button id="moveDown">Move down</button>
@@ -441,7 +470,7 @@ ul.pick li.sel .badge{background:rgba(255,255,255,.22); color:#fff}
       <p class="hint">Force a specific file to come from a specific pack, beating the priority order above. Useful when you like one pack overall but prefer another pack's version of a single texture or model.</p>
       <ul class="pick" id="ovList"></ul>
       <div class="src-actions">
-        <button id="addOv">Add</button>
+        <button id="addOv">Add&hellip;</button>
         <button id="removeOv">Remove</button>
       </div>
     </div>
@@ -450,7 +479,7 @@ ul.pick li.sel .badge{background:rgba(255,255,255,.22); color:#fff}
       <p class="hint">Drop files or whole folders from the merged pack. Useful for stripping parts of a pack you don't want, like its OptiFine extras. End a path with / to drop an entire folder.</p>
       <ul class="pick" id="exList"></ul>
       <div class="src-actions">
-        <button id="addEx">Add</button>
+        <button id="addEx">Add&hellip;</button>
         <button id="removeEx">Remove</button>
       </div>
     </div>

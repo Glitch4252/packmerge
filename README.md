@@ -1,6 +1,6 @@
 # packmerge
 
-Merge Minecraft resource packs into a single pack, deterministically,
+Merge Minecraft: Java Edition resource packs into a single pack, deterministically,
 so updating is one command instead of an afternoon of manual frankensteining.
 
 Prefer buttons to JSON? Two frontends, same engine:
@@ -35,7 +35,17 @@ your state, cache, and lockfiles are untouched.
 The web UI also checks for updates automatically at startup (e.g. when
 launched at login) and installs them before serving, restarting itself
 into the new code. A failed check never blocks startup. Pass
-`--no-auto-update` to skip it.
+`--no-auto-update` to skip it. Files you edited yourself are detected
+(local edits vs. the last-installed version): they are never overwritten
+silently — the web UI and desktop GUI ask whether to keep your edits or
+take the repo version, the CLI keeps them unless you pass `--force`, and
+the startup check skips the update entirely until you resolve it.
+
+Want to restyle the web UI yourself? Put your tweaks in `custom.css`
+(styling) and/or `custom.js` (behavior) next to the script — the page loads
+them automatically, and the updater never touches those files. That keeps
+`packmerge_web.py` pristine so updates keep flowing; for deeper changes,
+ask and they'll be folded into the repo version itself.
 
 ## How it works
 
