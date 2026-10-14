@@ -1,0 +1,34 @@
+{
+  "description": "My personal merged pack (built with packmerge)",
+  "exclude": [
+    "assets/minecraft/optifine/color.properties",
+    "assets/some-mod-you-dont-use/"
+  ],
+  "mc_version": "26.3",
+  "output": "MyFrankenpack.zip",
+  "overrides": {
+    "assets/minecraft/textures/gui/book.png": "dark-mode"
+  },
+  "pack_name": "MyFrankenpack",
+  "sources": [
+    {
+      "modrinth": "default-dark-mode",
+      "name": "dark-mode"
+    },
+    {
+      "modrinth": "https://modrinth.com/resourcepack/your-pack-here",
+      "name": "tweaks"
+    },
+    {
+      "name": "direct",
+      "url": "https://example.com/some-pack.zip"
+    },
+    {
+      "name": "local",
+      "path": "./my-hand-tweaks.zip"
+    }
+  ],
+  "respackopts_id": "myFrankenpack",
+  "merge_respackopts": true,
+  "smart_json_merge": true
+}
