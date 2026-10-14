@@ -1,9 +1,9 @@
 {
-  "version": "2026.10.14.3",
+  "version": "20206.10.14.4",
   "files": {
     "packmerge.py": "9f16752a270571c4a64aa6f2d6f161bb11718ff1aa4c5386f502aa541f1c42a6",
     "packmerge_gui.py": "7a157fc41d9fa534a0515811087b4d2fb7dbd271e3dbfb88dd149d26c193ae90",
-    "packmerge_web.py": "334b546ae0f5f55cc3459fef05a158c61af9251a719a95986add9ea529a5f4fd",
+    "packmerge_web.py": "cbc7b17e70c720c9345ab1ec931a8678c0409230adbf742de79c6357cc2f675b",
     "packmerge_update.py": "09961be297e151c170dd35a88db27a43909c66d23e537ecfaff61eae828a0771",
     "packmerge-web-start.bat": "87547b0664a0b571656cd9be4ca57ddc754fcb618a99c1f058e36da2c4630744",
     "README.md": "406f098d3dc66f7eaadfe34ee22cb402bc5799a2f6b2df0c1fc99e6b6c6e0821",

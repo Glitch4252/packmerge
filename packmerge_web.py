@@ -459,7 +459,7 @@ ul.pick li.sel .badge{background:rgba(255,255,255,.22); color:#fff}
       <button id="moveUp">Move up</button>
       <button id="moveDown">Move down</button>
       <span class="spacer"></span>
-      <button id="buildBtn" class="accent">Build merged pack</button>
+      <button id="buildBtn" class="accent">Merge Packs</button>
     </div>
   </div>
 
