@@ -81,16 +81,16 @@ def _fetch(url, req, timeout, retries=2):
     raise last
 
 
-def fetch_json(url, token, timeout=20):
-    data = _fetch(url, _request(url, token), timeout)
+def fetch_json(url, token, timeout=20, retries=2):
+    data = _fetch(url, _request(url, token), timeout, retries)
     return json.loads(data.decode("utf-8"))
 
 
-def fetch_bytes(url, token, timeout=60):
+def fetch_bytes(url, token, timeout=60, retries=2):
     req = urllib.request.Request(url, headers={"User-Agent": "packmerge-updater"})
     if token:
         req.add_header("Authorization", f"Bearer {token}")
-    return _fetch(url, req, timeout)
+    return _fetch(url, req, timeout, retries)
 
 
 def sha256_file(path):
@@ -116,7 +116,7 @@ def _base_url(repo, branch):
     return f"https://raw.githubusercontent.com/{repo}/{branch}"
 
 
-def remote_version_info():
+def remote_version_info(timeout=20, retries=2):
     """Fetch version.json from the repo. Raises on network/config errors."""
     cfg = load_config()
     repo = cfg.get("repo", "").strip().strip("/")
@@ -127,16 +127,16 @@ def remote_version_info():
             "packmerge-update.json is missing or has no \"repo\" "
             "(expected \"username/reponame\").")
     url = f"{_base_url(repo, branch)}/version.json"
-    info = fetch_json(url, token)
+    info = fetch_json(url, token, timeout, retries)
     if not isinstance(info, dict) or "files" not in info:
         raise RuntimeError("version.json in the repo is malformed.")
     return info, repo, branch, token
 
 
-def check():
+def check(timeout=20, retries=2):
     """Compare local files to the repo. Returns a result dict."""
     try:
-        info, repo, branch, token = remote_version_info()
+        info, repo, branch, token = remote_version_info(timeout, retries)
     except Exception as e:
         return {"ok": False, "error": str(e)}
     local = local_version()

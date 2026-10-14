@@ -32,6 +32,11 @@ the scripts. (For a private repo, also put a personal access token in the
 `version.json` before each push. Only files listed there are ever replaced;
 your state, cache, and lockfiles are untouched.
 
+The web UI also checks for updates automatically at startup (e.g. when
+launched at login) and installs them before serving, restarting itself
+into the new code. A failed check never blocks startup. Pass
+`--no-auto-update` to skip it.
+
 ## How it works
 
 You describe your merge in `manifest.json`:

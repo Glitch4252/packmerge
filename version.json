@@ -3,10 +3,10 @@
   "files": {
     "packmerge.py": "9f16752a270571c4a64aa6f2d6f161bb11718ff1aa4c5386f502aa541f1c42a6",
     "packmerge_gui.py": "138f151cabc90185fb3de12da2bb19beaf2cbd48715871403ad491e4a9ba7314",
-    "packmerge_web.py": "2e0b96a31228d9acbf91dee5a5bcb286baa2595524d9dbca712f84d74eb7c5c9",
-    "packmerge_update.py": "889a721beff39210b040b82d2a6d35bba439d3266f4a0bcb2f9ae8a952151d2a",
+    "packmerge_web.py": "071be0d94cd03fbc0021042bb54e8df216f3ec91a29158d3e48fff09b5757578",
+    "packmerge_update.py": "ed3432abfefbbcd6f6367bb4ecabc8b9909d4d0b3d2d80a0a574e319ff42fbf3",
     "packmerge-web-start.bat": "87547b0664a0b571656cd9be4ca57ddc754fcb618a99c1f058e36da2c4630744",
-    "README.md": "b4dc29a5dd315b1ac8403ad6af7679672c0c4b680ee0fa44c8f698cec4348135",
+    "README.md": "84fb90a280bbb5e7fd977265f67b187f42bef12944884c337ab2681b21970b48",
     "manifest.example.json": "f9f145091710fe11295687eb1849d1f48c14c84ef88caa67a3dedee810334331"
   }
 }

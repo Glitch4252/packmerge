@@ -949,11 +949,47 @@ function finishRun(rc, text){
 """
 # ------------------------------------------------------------------ main
 
+def _auto_update_at_startup(args):
+    """Check for and install app updates at startup (e.g. at login).
+
+    Runs before the server starts; if updates were installed, re-execs
+    into the new code. Never breaks startup: any failure just starts
+    the server as-is.
+    """
+    if args.no_auto_update:
+        return
+    try:
+        import packmerge_update
+    except ImportError:
+        return
+    if not packmerge_update.configured():
+        return
+    try:
+        res = packmerge_update.check(timeout=10, retries=1)
+    except Exception:
+        return
+    if not res.get("ok") or not res.get("changed"):
+        return
+    try:
+        ok, _msg = packmerge_update.install(res)
+    except Exception:
+        return
+    if ok:
+        print(f"[packmerge-web] updated to {res['remote']}, restarting…")
+        # guard flag keeps the new process from checking again (no loops)
+        sys.argv = ([sys.argv[0]]
+                    + [a for a in sys.argv[1:] if a != "--no-auto-update"]
+                    + ["--no-auto-update"])
+        packmerge_update.restart_into("packmerge_web.py")
+
+
 def main():
     ap = argparse.ArgumentParser(description="Browser UI for packmerge, served locally.")
     ap.add_argument("--port", type=int, default=8471)
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--no-browser", action="store_true")
+    ap.add_argument("--no-auto-update", action="store_true",
+                    help="skip the automatic update check at startup")
     args = ap.parse_args()
 
     if not os.path.exists(PACKMERGE_PY):
@@ -964,6 +1000,8 @@ def main():
         # the server instantly, so send output to a log file instead
         logf = open(os.path.join(HERE, "packmerge-web.log"), "a", buffering=1)
         sys.stdout = sys.stderr = logf
+
+    _auto_update_at_startup(args)
 
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     url = f"http://{args.host}:{args.port}"
