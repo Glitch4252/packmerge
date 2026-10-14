@@ -194,8 +194,6 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"path": normalize_path(qs.get("path", [""])[0])})
         if parsed.path == "/api/open-output":
             return self._json(open_output_folder())
-        if parsed.path == "/api/app-update":
-            return self._app_update(body)
         self.send_error(404)
 
     def do_POST(self):
@@ -215,6 +213,8 @@ class Handler(BaseHTTPRequestHandler):
                 mode = "build"
             ok = start_run(mode if mode in ("build", "check") else "build")
             return self._json({"ok": ok})
+        if parsed.path == "/api/app-update":
+            return self._app_update(body)
         self.send_error(404)
 
     def _app_update(self, body):
