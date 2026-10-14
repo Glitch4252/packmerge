@@ -1,12 +1,11 @@
 {
-  "version": "2026.10.14.7",
+  "version": "2026.10.14.8",
   "files": {
     "packmerge.py": "9f16752a270571c4a64aa6f2d6f161bb11718ff1aa4c5386f502aa541f1c42a6",
-    "packmerge_gui.py": "7a157fc41d9fa534a0515811087b4d2fb7dbd271e3dbfb88dd149d26c193ae90",
-    "packmerge_web.py": "ffd5b6d73c7a7e27f846403bdcb5905637d6c82fbafae4228bd57031df14cb2f",
-    "packmerge_update.py": "923b8443f6d52fd304e744620762d35c798f8298af25a87b734181ac2d2abf5e",
+    "packmerge_web.py": "923391a2f26379d973f1e1913780944e539a91152814ad60e7e6856ab16e1210",
+    "packmerge_update.py": "c3c3dfb1c06304761c5e93cb0cc4ecc3e065a8f1cce40307daece3a95a5bc724",
     "packmerge-web-start.bat": "1c7fd823fc5d5e5f4207e39504234d78ab3c3bbea1691e307ecff34ebff5546f",
-    "README.md": "406f098d3dc66f7eaadfe34ee22cb402bc5799a2f6b2df0c1fc99e6b6c6e0821",
+    "README.md": "00b9b5e5a3266e9905deef62a2f8990f8b9799180d5a4b52a4a9e042aad58d9d",
     "manifest.example.json": "f9f145091710fe11295687eb1849d1f48c14c84ef88caa67a3dedee810334331"
   }
 }

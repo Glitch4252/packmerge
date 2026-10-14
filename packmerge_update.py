@@ -38,7 +38,6 @@ LOCAL_VERSION_PATH = os.path.join(HERE, "version.json")
 # files managed by the updater (never touches state, cache, or lockfiles)
 MANAGED_FILES = [
     "packmerge.py",
-    "packmerge_gui.py",
     "packmerge_web.py",
     "packmerge_update.py",
     "packmerge-web-start.bat",

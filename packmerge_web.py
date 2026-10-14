@@ -4,7 +4,7 @@ packmerge_web -- a browser UI for packmerge, served from your own machine.
     python3 packmerge_web.py [--port 8471] [--host 127.0.0.1] [--no-browser]
 
 Then open the printed address in your browser. Same engine (packmerge.py)
-and same state file as the desktop GUI -- this page is just another face.
+and shared state file -- this page is the face of the app.
 Stdlib only: no pip packages, no JS frameworks.
 
 Binds to 127.0.0.1 by default (this machine only). Pass --host 0.0.0.0 to
@@ -480,7 +480,7 @@ ul.pick li.sel .badge{background:rgba(255,255,255,.22); color:#fff}
       <button id="moveUp">Move up</button>
       <button id="moveDown">Move down</button>
       <span class="spacer"></span>
-      <button id="buildBtn" class="accent">Build merged pack</button>
+      <button id="buildBtn" class="accent">Merge Packs</button>
     </div>
   </div>
 
