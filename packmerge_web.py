@@ -101,7 +101,7 @@ def _run_worker(mode):
 
 # ------------------------------------------------------------ file browse
 def browse(path):
-    start = os.path.expanduser("~"), "Downloads"
+    start = os.path.join(os.path.expanduser("~"), "Downloads")
     p = os.path.abspath(path) if path else start
     if not os.path.isdir(p):
         p = start
