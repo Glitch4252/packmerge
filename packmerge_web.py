@@ -24,6 +24,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 HERE = os.path.dirname(os.path.abspath(__file__))
 PACKMERGE_PY = os.path.join(HERE, "packmerge.py")
 STATE_PATH = os.path.join(HERE, "packmerge-gui-state.json")
+LAST_LOG_PATH = os.path.join(HERE, "packmerge-last-run.log")
 MODRINTH_API = "https://api.modrinth.com/v2"
 
 
@@ -64,12 +65,34 @@ def save_state(data):
 run_lock = threading.Lock()
 run_info = {"running": False, "lines": [], "done": True, "rc": 0}
 
+# restore the last run's log so the page shows it after reload/restart
+try:
+    with open(LAST_LOG_PATH, encoding="utf-8", errors="replace") as f:
+        run_info["lines"] = f.read().splitlines(keepends=True)
+except OSError:
+    pass
+
+
+def _append_log_line(line):
+    with run_lock:
+        run_info["lines"].append(line)
+    try:
+        with open(LAST_LOG_PATH, "a", encoding="utf-8", errors="replace") as f:
+            f.write(line)
+    except OSError:
+        pass
+
 
 def start_run(mode):
     with run_lock:
         if run_info["running"]:
             return False
         run_info.update(running=True, lines=[], done=False, rc=0)
+    try:
+        # fresh log file for this run
+        open(LAST_LOG_PATH, "w").close()
+    except OSError:
+        pass
     threading.Thread(target=_run_worker, args=(mode,), daemon=True).start()
     return True
 
@@ -86,15 +109,13 @@ def _run_worker(mode):
             text=True, bufsize=1)
         for line in proc.stdout:
             lines.append(line)
-            with run_lock:
-                run_info["lines"].append(line)
+            _append_log_line(line)
         proc.wait()
         rc = proc.returncode
     except Exception as e:
         msg = f"[packmerge] failed to start: {e}\n"
         lines.append(msg)
-        with run_lock:
-            run_info["lines"].append(msg)
+        _append_log_line(msg)
     with run_lock:
         run_info.update(running=False, done=True, rc=rc)
 
@@ -459,7 +480,7 @@ ul.pick li.sel .badge{background:rgba(255,255,255,.22); color:#fff}
       <button id="moveUp">Move up</button>
       <button id="moveDown">Move down</button>
       <span class="spacer"></span>
-      <button id="buildBtn" class="accent">Merge Packs</button>
+      <button id="buildBtn" class="accent">Build merged pack</button>
     </div>
   </div>
 
@@ -1012,6 +1033,15 @@ function finishRun(rc, text){
     return;
   }
   renderAll();
+  // show the last run's log (if any) so the log isn't blank after reload
+  try{
+    const d = await api("GET","/api/log");
+    if(d.lines && d.lines.length){
+      seenLog = d.lines.length;
+      $("log").textContent = d.lines.join("");
+      $("log").scrollTop = $("log").scrollHeight;
+    }
+  }catch(e){}
 })();
 </script>
 </body>
