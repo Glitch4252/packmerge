@@ -68,18 +68,28 @@ def _request(url, token):
     return req
 
 
+def _fetch(url, req, timeout, retries=2):
+    """Fetch with one retry; the egress proxy occasionally hiccups."""
+    last = None
+    for _ in range(retries):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return r.read()
+        except Exception as e:
+            last = e
+    raise last
+
+
 def fetch_json(url, token, timeout=20):
-    with urllib.request.urlopen(_request(url, token),
-                                 timeout=timeout) as r:
-        return json.loads(r.read().decode("utf-8"))
+    data = _fetch(url, _request(url, token), timeout)
+    return json.loads(data.decode("utf-8"))
 
 
 def fetch_bytes(url, token, timeout=60):
     req = urllib.request.Request(url, headers={"User-Agent": "packmerge-updater"})
     if token:
         req.add_header("Authorization", f"Bearer {token}")
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return r.read()
+    return _fetch(url, req, timeout)
 
 
 def sha256_file(path):
