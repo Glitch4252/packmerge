@@ -1,4 +1,4 @@
-# packmerge
+# Packmerge
 
 Merge Minecraft: Java Edition resource packs into a single pack, deterministically,
 so updating is one command instead of an afternoon of manual frankensteining.
