@@ -37,6 +37,7 @@ MANAGED_FILES = [
     "packmerge_gui.py",
     "packmerge_web.py",
     "packmerge_update.py",
+    "packmerge-web-start.bat",
     "README.md",
     "manifest.example.json",
     "version.json",

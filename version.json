@@ -4,7 +4,8 @@
     "packmerge.py": "9f16752a270571c4a64aa6f2d6f161bb11718ff1aa4c5386f502aa541f1c42a6",
     "packmerge_gui.py": "138f151cabc90185fb3de12da2bb19beaf2cbd48715871403ad491e4a9ba7314",
     "packmerge_web.py": "63aec5e9e3efea9d537b785573de88822daf214e1c2bb9263966d130a2e36eac",
-    "packmerge_update.py": "b4e0d64dd6e3ea877fcb14e97e1e0e5b6d6b07c3b96b482df97ffd0e88336e3a",
+    "packmerge_update.py": "889a721beff39210b040b82d2a6d35bba439d3266f4a0bcb2f9ae8a952151d2a",
+    "packmerge-web-start.bat": "e13f3bb08be6964e276e304793c8d265472d76ba3afca2dca4703d7c66cc50f9",
     "README.md": "b4dc29a5dd315b1ac8403ad6af7679672c0c4b680ee0fa44c8f698cec4348135",
     "manifest.example.json": "f9f145091710fe11295687eb1849d1f48c14c84ef88caa67a3dedee810334331"
   }
