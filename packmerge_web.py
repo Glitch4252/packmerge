@@ -18,6 +18,7 @@ import re
 import subprocess
 import sys
 import threading
+import time
 import urllib.parse
 import urllib.request
 import webbrowser
@@ -343,9 +344,15 @@ def wb_state_view():
         # The Discover nav badge counts real subscriptions only, and
         # hides at zero (see the slice-4 frontend).
         "subscription_count": sum(1 for s in srcs if s.get("subscribed")),
-        # The merge queue counts pending RPO setting changes (queued
-        # pack updates arrive in a later slice and add to this).
-        "queue_count": wb_rpo_pending_count(st),
+        # The merge queue is unified (slice 5): queued pack updates
+        # plus pending RPO setting changes, together.
+        "queue_count": (len(st.get("wb_queued_updates") or {})
+                        + wb_rpo_pending_count(st)),
+        "queue_breakdown": {
+            "updates": len(st.get("wb_queued_updates") or {}),
+            "rpo": wb_rpo_pending_count(st),
+        },
+        "auto_rebuild": bool(st.get("wb_auto_rebuild", False)),
         "last_build": st.get("wb_last_build"),
         "last_output_size": st.get("wb_last_output_size"),
     }
@@ -414,13 +421,15 @@ def wb_add_path(path):
             "pack_type": ptype, "files": count}, None
 
 
-def wb_build_manifest():
+def wb_build_manifest(mode="build"):
     """The manifest the engine runs for a workbench build.
 
     Only enabled sources reach the engine, and only engine-known keys
     are passed (workbench-only keys like "enabled" are stripped).
     Output is an absolute path in the Downloads folder, matching the
-    Build card's promise.
+    Build card's promise. For build-mode runs, a source with a queued
+    update is pinned to the queued version (modrinth_version_id);
+    check-mode runs resolve live, as before.
     """
     st = load_state()
     all_srcs = st.get("sources", [])
@@ -431,11 +440,23 @@ def wb_build_manifest():
     enabled_names = set()
     for oi, s in zip(enabled_idx, enabled):
         enabled_names.add(s.get("name") or ("source-%d" % oi))
+    queued = (st.get("wb_queued_updates") or {}) if mode == "build" else {}
     clean = []
     for s in enabled:
-        clean.append({k: s[k] for k in ("name", "modrinth", "url", "path",
-                                      "pack_type")
-                      if k in s})
+        entry = {k: s[k] for k in ("name", "modrinth", "url", "path",
+                                   "pack_type")
+                 if k in s}
+        # A queued update pins this build to the queued version: the
+        # engine otherwise resolves newest at build time, which would
+        # make the queue theater (a build would pull whatever is
+        # newest regardless of what was queued). The pin is a Modrinth
+        # version id, so the lock stays modrinth-shaped.
+        slug = (s.get("subscribed_slug")
+                or (wb_modrinth_slug(s["modrinth"]) if "modrinth" in s
+                    else None))
+        if slug and slug in queued:
+            entry["modrinth_version_id"] = queued[slug]["new_version_id"]
+        clean.append(entry)
     # Translate overrides into the filtered manifest's terms: name refs
     # stay names (the engine resolves a name to the last same-named
     # enabled source); 1.x index refs are full-list positions and are
@@ -499,7 +520,7 @@ def wb_lock_by_name(lock):
     return by_name
 
 
-def wb_prepare_build():
+def wb_prepare_build(mode="build"):
     """Write the filtered build manifest + translated lock.
 
     The engine keys its lock by "index:name", so filtering disabled
@@ -508,7 +529,7 @@ def wb_prepare_build():
     for the run, original indices when writing back.
     Returns (enabled_sources, orig_index_by_name, temp_index_by_orig).
     """
-    manifest, enabled = wb_build_manifest()
+    manifest, enabled = wb_build_manifest(mode)
     with open(WB_BUILD_MANIFEST, "w") as f:
         json.dump(manifest, f, indent=2)
     real_lock = {}
@@ -564,10 +585,21 @@ def wb_after_build(rc, mode, orig_index, temp_index):
         pass
     st = load_state()
     cache_dir = os.path.join(HERE, ".packmerge-cache")
+    queued_slugs = set(st.get("wb_queued_updates") or {})
     for i, s in enumerate(st.get("sources", [])):
         name = s.get("name", "source-%d" % i)
         if "modrinth" in s and name in by_name:
-            if by_name[name].get("version_number"):
+            # A queued update owns this source's displayed version
+            # until a build consumes it: a check run resolves live
+            # (unpinned) and must not advance the row early. (The
+            # lock translation above is untouched — it only drives
+            # the engine's change detection, and the pinned build
+            # reconciles it.)
+            slug = (s.get("subscribed_slug")
+                    or (wb_modrinth_slug(s["modrinth"])
+                        if "modrinth" in s else None))
+            if (slug not in queued_slugs
+                    and by_name[name].get("version_number")):
                 s["version"] = by_name[name]["version_number"]
         if "path" in s:
             p = s["path"] if os.path.isabs(s["path"]) else os.path.join(
@@ -597,12 +629,19 @@ def wb_after_build(rc, mode, orig_index, temp_index):
         if os.path.exists(out_path):
             st["wb_last_build"] = datetime.now(timezone.utc).isoformat()
             st["wb_last_output_size"] = os.path.getsize(out_path)
+        # Queued updates are consumed by this build, in the same gate
+        # as RPO pending values (successful build-mode runs only;
+        # wb_after_build already early-returns on failure, and check
+        # runs never reach this block).
     save_state(st)
     # A successful build bakes pending RPO values; they become the new
     # baseline and pending clears. Check runs never consume (nothing
     # was baked), and failed runs change nothing (early return above).
+    # Queued updates drain in the same gate, after RPO consumption
+    # (which saves state itself, so the queue read below is fresh).
     if mode == "build":
         wb_rpo_consume_pending()
+        wb_updates_consume()
 
 
 def wb_start_run(mode):
@@ -610,7 +649,7 @@ def wb_start_run(mode):
     enabled = [s for s in st.get("sources", []) if s.get("enabled", True)]
     if not enabled:
         return False, "Add at least one enabled pack first."
-    _enabled, orig_index, temp_index = wb_prepare_build()
+    _enabled, orig_index, temp_index = wb_prepare_build(mode)
 
     def after(rc):
         wb_after_build(rc, mode, orig_index, temp_index)
@@ -2058,6 +2097,408 @@ def wb_sources_backfill_meta():
             "filled_files": filled_files}
 
 
+# ------------------------------------------------------------ workbench updates (2.0 slice 5)
+# The Activity tab runs on real Modrinth update checks. The state
+# keys are all workbench-only (1.x ignores them):
+#   wb_updates_available: dict slug -> update entry, REBUILT fresh on
+#       each check. A slug with a queued update is excluded from
+#       available entirely (its update is already in hand); the next
+#       check after consumption finds anything newer still.
+#   wb_queued_updates: dict slug -> queued entry (old vs new version,
+#       new version id, download path, file count). Queued entries
+#       persist across restarts and are consumed by a successful
+#       build-mode run (see wb_updates_consume).
+#   wb_last_update_check: ISO timestamp of the last check, or None.
+#   wb_auto_rebuild: bool, the one switch mirrored on the Build card
+#       and the Activity tab.
+# Version ordering never compares version_number strings: "6.0.2" vs
+# "6.0.2+mod" does not order reliably. The newest pack-loader version
+# is compared to the subscribed version by date_published (the
+# subscribed version is looked up in the same version list by
+# number); only when it cannot be found there does the check fall
+# back to "different number means newer".
+
+
+def wb_pack_loader(pack_type):
+    """The Modrinth loader that marks a pack version: datapack for
+    data packs, minecraft for resource packs. None for unknown types
+    (either loader counts). Same rule as fixup 3's resolution."""
+    if pack_type == "datapack":
+        return "datapack"
+    if pack_type == "resourcepack":
+        return "minecraft"
+    return None
+
+
+def wb_updates_cache_size():
+    """Real size of the scan/build cache dir, or None if it cannot
+    be walked (the UI then shows an honest dash)."""
+    total = 0
+    try:
+        for root, _dirs, files in os.walk(WB_CACHE_DIR):
+            for fn in files:
+                try:
+                    total += os.path.getsize(os.path.join(root, fn))
+                except OSError:
+                    pass
+    except OSError:
+        return None
+    return total
+
+
+def wb_updates_view():
+    """Pure state read: available + queued updates, badge count,
+    last check, cache size, switch state. No Modrinth calls."""
+    st = load_state()
+    avail = st.get("wb_updates_available") or {}
+    queued = st.get("wb_queued_updates") or {}
+    by_name = lambda e: (e.get("name") or e.get("slug") or "").lower()
+    return {
+        "ok": True,
+        "auto_rebuild": bool(st.get("wb_auto_rebuild", False)),
+        "available": sorted(avail.values(), key=by_name),
+        "queued": sorted(queued.values(), key=by_name),
+        # Badge definition: updates waiting for action = available
+        # updates not yet queued/applied PLUS queued updates still
+        # awaiting a build. Hidden at zero. A queued update still
+        # needs a build, so it still counts.
+        "badge": len(avail) + len(queued),
+        "last_check": st.get("wb_last_update_check"),
+        "cache_size": wb_updates_cache_size(),
+    }
+
+
+def wb_updates_check():
+    """Run a real update check over every enabled subscribed source
+    and rebuild wb_updates_available from scratch. Per-source fetch
+    failures skip that source without failing the whole check (the
+    response carries an errors list so the UI can say so)."""
+    st = load_state()
+    queued = st.get("wb_queued_updates") or {}
+    available = {}
+    errors = []
+    for s in st.get("sources", []):
+        if not s.get("subscribed") or not s.get("enabled", True):
+            continue
+        slug = (s.get("subscribed_slug")
+                or (wb_modrinth_slug(s["modrinth"])
+                    if "modrinth" in s else None))
+        if not slug or slug in queued:
+            continue
+        try:
+            versions = _engine.api_get(
+                "%s/project/%s/version" % (_engine.MODRINTH_API, slug))
+        except Exception as e:
+            errors.append({"slug": slug, "error": str(e)})
+            continue
+        loader = wb_pack_loader(s.get("pack_type"))
+        if loader is None:
+            cands = [v for v in versions
+                     if "datapack" in (v.get("loaders") or [])
+                     or "minecraft" in (v.get("loaders") or [])]
+        else:
+            cands = [v for v in versions
+                     if loader in (v.get("loaders") or [])]
+        if not cands:
+            continue
+        cands.sort(key=lambda v: v.get("date_published", ""), reverse=True)
+        newest = cands[0]
+        sub_num = s.get("subscribed_version")
+        sub = None
+        for v in cands:
+            if v.get("version_number") == sub_num:
+                sub = v
+                break
+        if sub is not None:
+            is_newer = (newest.get("date_published", "")
+                        > sub.get("date_published", ""))
+        else:
+            is_newer = newest.get("version_number") != sub_num
+        if not is_newer:
+            continue
+        available[slug] = {
+            "slug": slug,
+            "name": s.get("name") or slug,
+            "old_version": sub_num,
+            "new_version": newest.get("version_number"),
+            "new_version_id": newest.get("id"),
+            "new_date": newest.get("date_published"),
+            "changelog": (newest.get("changelog") or "")[:4000],
+            "icon_url": s.get("icon_url"),
+            "pack_type": s.get("pack_type"),
+        }
+    st["wb_updates_available"] = available
+    st["wb_last_update_check"] = datetime.now(timezone.utc).isoformat()
+    save_state(st)
+    view = wb_updates_view()
+    view["errors"] = errors
+    return view
+
+
+def wb_updates_download_version(slug, version_id):
+    """Best-effort download of one specific Modrinth version into the
+    queue area of the cache. Returns (filename, path, file_count,
+    error): path/count are None and error is set when the download
+    could not happen, but the caller still queues the pin — the
+    build resolves the pinned version itself, so a failed apply-time
+    download costs one retry at build time, not a lost update."""
+    try:
+        ver = _engine.api_get("%s/version/%s"
+                              % (_engine.MODRINTH_API, version_id))
+        files = ver.get("files") or []
+        if not files:
+            return None, None, None, "That version has no files."
+        f = next((x for x in files if x.get("primary")), files[0])
+        dest = os.path.join(WB_CACHE_DIR,
+                            "queued-%s-%s" % (slug, f["filename"]))
+        os.makedirs(WB_CACHE_DIR, exist_ok=True)
+        _engine.download_file(f["url"], dest,
+                              expected_sha512=f.get("hashes", {}).get("sha512"))
+        count, _ptype = wb_inspect_zip(dest)
+        return f["filename"], dest, count, None
+    except Exception as e:
+        return None, None, None, str(e)
+
+
+def _wb_updates_apply_one(st, slug):
+    """Queue one available update in the given (unsaved) state.
+    Returns ("ok" | "already" | "noupdate", entry-or-None). Never
+    raises for a download failure: the pin is what the build needs,
+    and the entry records the failure honestly."""
+    queued = st.setdefault("wb_queued_updates", {})
+    if slug in queued:
+        return "already", queued[slug]
+    avail = st.get("wb_updates_available") or {}
+    entry = avail.get(slug)
+    if not entry:
+        return "noupdate", None
+    _fn, path, count, err = wb_updates_download_version(
+        slug, entry["new_version_id"])
+    queued[slug] = {
+        "slug": slug,
+        "name": entry["name"],
+        "old_version": entry["old_version"],
+        "new_version": entry["new_version"],
+        "new_version_id": entry["new_version_id"],
+        "changelog": entry.get("changelog", ""),
+        "icon_url": entry.get("icon_url"),
+        "pack_type": entry.get("pack_type"),
+        "file_count": count,
+        "downloaded": path is not None,
+        "download_error": err,
+        "downloaded_path": path,
+        "queued_at": datetime.now(timezone.utc).isoformat(),
+    }
+    avail.pop(slug, None)
+    return "ok", queued[slug]
+
+
+def wb_updates_apply(slug):
+    """Apply one update: queue it (auto OFF) or queue + build (auto
+    ON). Returns (payload, http_status)."""
+    st = load_state()
+    status, _entry = _wb_updates_apply_one(st, slug)
+    if status == "noupdate":
+        return {"ok": False,
+                "error": "No update available for that pack."}, 404
+    save_state(st)
+    build_started = False
+    if st.get("wb_auto_rebuild", False):
+        ok, _err = wb_start_run("build")
+        build_started = ok
+    view = wb_updates_view()
+    view["already"] = (status == "already")
+    view["build_started"] = build_started
+    return view, 200
+
+
+def wb_updates_apply_all():
+    """Queue (or queue + one build, auto ON) every available update.
+    Per-item failures are collected, never aborting the rest."""
+    st = load_state()
+    avail = st.get("wb_updates_available") or {}
+    applied, already, failed = [], [], []
+    for slug in list(avail.keys()):
+        try:
+            status, _entry = _wb_updates_apply_one(st, slug)
+        except Exception as e:
+            failed.append({"slug": slug, "error": str(e)})
+            continue
+        if status == "ok":
+            applied.append(slug)
+        elif status == "already":
+            already.append(slug)
+        else:
+            failed.append({"slug": slug,
+                           "error": "No update available for that pack."})
+    save_state(st)
+    build_started = False
+    if applied and st.get("wb_auto_rebuild", False):
+        ok, _err = wb_start_run("build")
+        build_started = ok
+    view = wb_updates_view()
+    view["applied"] = applied
+    view["already"] = already
+    view["failed"] = failed
+    view["build_started"] = build_started
+    return view, 200
+
+
+def wb_updates_dequeue(slug):
+    """Remove a queued update and put it back in available, so the
+    update waits again instead of vanishing until the next check.
+    Idempotent: dequeuing a non-queued slug is a no-op success."""
+    st = load_state()
+    queued = st.get("wb_queued_updates") or {}
+    entry = queued.pop(slug, None)
+    if entry is None:
+        return {"ok": True, "removed": False}, 200
+    path = entry.get("downloaded_path")
+    if path:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+    avail = st.setdefault("wb_updates_available", {})
+    avail[slug] = {
+        "slug": slug,
+        "name": entry["name"],
+        "old_version": entry["old_version"],
+        "new_version": entry["new_version"],
+        "new_version_id": entry["new_version_id"],
+        "new_date": None,
+        "changelog": entry.get("changelog", ""),
+        "icon_url": entry.get("icon_url"),
+        "pack_type": entry.get("pack_type"),
+    }
+    save_state(st)
+    view = wb_updates_view()
+    view["removed"] = True
+    return view, 200
+
+
+def wb_updates_auto(on):
+    """Set the one Auto Rebuild switch. Turning it ON with a
+    non-empty queue triggers a build run (the queued items merge).
+    Turning it OFF triggers nothing. Returns (payload, status)."""
+    st = load_state()
+    st["wb_auto_rebuild"] = bool(on)
+    save_state(st)
+    build_started = False
+    if on and st.get("wb_queued_updates"):
+        ok, _err = wb_start_run("build")
+        build_started = ok
+    view = wb_updates_view()
+    view["auto_rebuild"] = bool(on)
+    view["build_started"] = build_started
+    return view, 200
+
+
+def wb_updates_consume():
+    """Drain queued updates after a successful build-mode run (called
+    from wb_after_build's build-mode gate, after RPO consumption).
+    The pinned build already merged the new version, so consumption
+    only updates the source record: subscribed_version/version become
+    the new version, files from the queued count when known, and the
+    queued download file is deleted. Entries for removed sources are
+    dropped (they can never merge); entries for disabled sources are
+    kept (they resume if the source is re-enabled)."""
+    st = load_state()
+    queued = st.get("wb_queued_updates") or {}
+    if not queued:
+        return
+    by_slug = {}
+    for s in st.get("sources", []):
+        slug = (s.get("subscribed_slug")
+                or (wb_modrinth_slug(s["modrinth"])
+                    if "modrinth" in s else None))
+        if slug:
+            by_slug[slug] = s
+    changed = False
+    for slug, q in list(queued.items()):
+        s = by_slug.get(slug)
+        if s is None:
+            del queued[slug]
+            changed = True
+            continue
+        if not s.get("enabled", True):
+            continue
+        s["subscribed_version"] = q["new_version"]
+        s["version"] = q["new_version"]
+        if q.get("file_count") is not None:
+            s["files"] = q["file_count"]
+        path = q.get("downloaded_path")
+        if path:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+        del queued[slug]
+        changed = True
+    if changed:
+        save_state(st)
+
+
+def wb_watch_loop():
+    """Filesystem watch mode, polling mtimes every 5s. Only runs
+    while Auto Rebuild is ON (the switch is labeled "Watch for
+    changes", and this is the watch half of it). While OFF the mtime
+    map is re-baselined each loop, so enabling later never fires for
+    old changes. Only local path sources are watched; a new path
+    joins silently, a deleted path drops silently (it must never
+    loop-fail builds), and a change seen while a build is already
+    running is NOT advanced in the map, so it retriggers after the
+    run finishes. Builds never modify source files, so a triggered
+    build cannot retrigger itself. Every iteration is guarded so a
+    watch failure can never crash the server."""
+    mtimes = {}
+    while True:
+        try:
+            time.sleep(5)
+            st = load_state()
+            if not st.get("wb_auto_rebuild", False):
+                mtimes = {}
+                for s in st.get("sources", []):
+                    p = s.get("path")
+                    if p and os.path.isfile(p):
+                        try:
+                            mtimes[p] = os.path.getmtime(p)
+                        except OSError:
+                            pass
+                continue
+            changed = []
+            for s in st.get("sources", []):
+                if not s.get("enabled", True):
+                    continue
+                p = s.get("path")
+                if not p:
+                    continue
+                try:
+                    cur = os.path.getmtime(p)
+                except OSError:
+                    mtimes.pop(p, None)
+                    continue
+                if p in mtimes and mtimes[p] != cur:
+                    changed.append(p)
+                elif p not in mtimes:
+                    mtimes[p] = cur
+            if changed:
+                with run_lock:
+                    busy = run_info["running"]
+                if not busy:
+                    ok, _err = wb_start_run("build")
+                    if ok:
+                        for p in changed:
+                            try:
+                                mtimes[p] = os.path.getmtime(p)
+                            except OSError:
+                                mtimes.pop(p, None)
+                # Busy or failed start: the map keeps the old values,
+                # so the change retriggers on a later loop.
+        except Exception:
+            continue
+
+
 # ---------------------------------------------------------------- server
 class Handler(BaseHTTPRequestHandler):
     server_version = "packmerge-web/1.0"
@@ -2149,6 +2590,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(load_state())
         if parsed.path == "/api/wb/state":
             return self._json(wb_state_view())
+        if parsed.path == "/api/wb/updates":
+            return self._json(wb_updates_view())
         if parsed.path == "/api/wb/open-output":
             return self._json(wb_open_output())
         if parsed.path == "/api/log":
@@ -2429,6 +2872,38 @@ class Handler(BaseHTTPRequestHandler):
             if err:
                 return self._json({"ok": False, "error": err}, status)
             return self._json(payload)
+        if parsed.path == "/api/wb/updates/check":
+            return self._json(wb_updates_check())
+        if parsed.path == "/api/wb/updates/apply":
+            try:
+                slug = json.loads(body).get("slug", "")
+            except Exception:
+                slug = ""
+            if not slug:
+                return self._json({"ok": False,
+                                   "error": "Missing pack."}, 400)
+            payload, status = wb_updates_apply(slug)
+            return self._json(payload, status)
+        if parsed.path == "/api/wb/updates/apply-all":
+            payload, status = wb_updates_apply_all()
+            return self._json(payload, status)
+        if parsed.path == "/api/wb/updates/dequeue":
+            try:
+                slug = json.loads(body).get("slug", "")
+            except Exception:
+                slug = ""
+            if not slug:
+                return self._json({"ok": False,
+                                   "error": "Missing pack."}, 400)
+            payload, status = wb_updates_dequeue(slug)
+            return self._json(payload, status)
+        if parsed.path == "/api/wb/updates/auto":
+            try:
+                on = bool(json.loads(body).get("on", False))
+            except Exception:
+                on = False
+            payload, status = wb_updates_auto(on)
+            return self._json(payload, status)
         if parsed.path == "/api/wb/sources/backfill-icons":
             return self._json(wb_sources_backfill_icons())
         if parsed.path == "/api/wb/sources/backfill-meta":
@@ -3289,6 +3764,11 @@ def main():
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     url = f"http://{args.host}:{args.port}"
     print(f"[packmerge-web] serving at {url}  (Ctrl+C to stop)")
+    # Watch mode (slice 5): a daemon mtime poller for local path
+    # sources, active only while Auto Rebuild is ON. Daemon so it
+    # never blocks shutdown; fully guarded so it cannot crash the
+    # server.
+    threading.Thread(target=wb_watch_loop, daemon=True).start()
     if not args.no_browser:
         threading.Timer(0.6, lambda: webbrowser.open(url)).start()
     try:

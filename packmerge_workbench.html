@@ -884,7 +884,7 @@
 
           <div class="conflict-stats">
             <div class="stat warn"><div class="n" id="statActivityUpdates">2</div><div class="t" id="statActivityUpdatesLabel">updates downloaded, waiting to apply</div></div>
-            <div class="stat ok"><div class="n">48.2 MB</div><div class="t">latest output · Downloads folder<button class="minibtn" data-browse-output title="Open the Downloads folder to browse the output"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>Browse</button></div></div>
+            <div class="stat ok"><div class="n" id="statCacheSize">—</div><div class="t">cache storage · Downloads folder<button class="minibtn" data-browse-output title="Open the Downloads folder to browse the output"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>Browse</button></div></div>
             <div class="stat switchstat">
               <label class="watchwrap" id="activityWatchWrap" title="Auto Rebuild: when on, local file changes merge automatically and updates downloaded in Activity merge automatically. When off, updates wait for your click before anything merges.">
                 <span class="switch"><input type="checkbox" id="activityWatchToggle"><span class="track"></span></span>
@@ -912,7 +912,7 @@
     <div class="scrim" id="changelogScrim" role="dialog" aria-modal="true" aria-labelledby="clTitle">
       <div class="dialog">
         <h3 id="clTitle">Faithful 32× — what's new</h3>
-        <p class="sub">Changelog provided by Modrinth for this version. The update has been downloaded — applying it adds it to the merge queue for your next build, or merges right away while Auto Rebuild is on.</p>
+        <p class="sub">Changelog provided by Modrinth for this version. Applying it downloads the update and adds it to the merge queue for your next build, or merges right away while Auto Rebuild is on.</p>
         <ul class="cl" id="clBody"></ul>
         <div class="foot">
           <button class="btn ghost" data-close>Not now</button>
@@ -1284,8 +1284,8 @@
           realUpdates.forEach(function(u){
             var row=document.createElement("div"); row.className="upd-row notif-row"; row.setAttribute("role","button"); row.setAttribute("tabindex","0");
             row.setAttribute("title","Open in Activity to review and apply this update");
-            row.innerHTML='<span class="thumb"><canvas class="pix" data-seed="'+u.seed+'" width="16" height="16"></canvas></span>'
-              +'<div class="m"><div class="n">'+u.name+' — update available</div><div class="d">'+u.from+' → '+u.to+' · downloaded · select to review in Activity</div></div>'
+            row.innerHTML='<span class="thumb">'+wb5Thumb(u)+'</span>'
+              +'<div class="m"><div class="n">'+u.name+(u.queued?' — update queued':' — update available')+'</div><div class="d">'+u.from+' → '+u.to+(u.queued?' · in the merge queue · select to review in Activity':' · update available · select to review in Activity')+'</div></div>'
               +'<div class="acts"><button class="btn small" data-goto-activity>Review in Activity</button></div>';
             wrap.appendChild(row);
           });
@@ -1317,8 +1317,8 @@
           updates.forEach(function(u){
             any=true;
             var row=document.createElement("div"); row.className="act-row";
-            row.innerHTML='<span class="act-ic"><canvas class="pix" data-seed="'+u.seed+'" width="16" height="16"></canvas></span>'
-              +'<div class="m"><div class="n">'+u.name+' <span class="pill open">UPDATE</span></div><div class="d">'+u.from+' → '+u.to+' · downloaded automatically · '+(on?'applying merges right away — Auto Rebuild is on':'not merged yet — applying adds it to the merge queue, no merge until your next build')+' · changelog provided by Modrinth</div></div>'
+            row.innerHTML='<span class="act-ic">'+wb5Thumb(u)+'</span>'
+              +'<div class="m"><div class="n">'+u.name+' <span class="pill open">UPDATE</span></div><div class="d">'+u.from+' → '+u.to+' · '+(on?'applying merges right away — Auto Rebuild is on':'not downloaded yet — applying downloads it to the merge queue, no merge until your next build')+' · changelog provided by Modrinth</div></div>'
               +'<div class="acts"><button class="btn small ghost" data-cl="'+u.id+'">Changelog</button>'
               +'<button class="btn small accent" data-upd="'+u.id+'">'+(on?'Apply update &amp; merge':'Apply update')+'</button></div>';
             feed.appendChild(row);
@@ -1326,12 +1326,13 @@
           queued.forEach(function(u){
             any=true;
             var qrow=document.createElement("div"); qrow.className="act-row";
-            qrow.innerHTML='<span class="act-ic"><canvas class="pix" data-seed="'+u.seed+'" width="16" height="16"></canvas></span>'
+            qrow.innerHTML='<span class="act-ic">'+wb5Thumb(u)+'</span>'
               +'<div class="m"><div class="n">'+u.name+' <span class="pill smart">QUEUED</span></div><div class="d">'+u.from+' → '+u.to+' · in the merge queue — applies on your next build, no merge has run yet</div></div>'
               +'<div class="acts"><button class="btn small ghost" data-deq="'+u.id+'">Remove from queue</button></div>';
             feed.appendChild(qrow);
           });
         }
+        el("activityEmpty").textContent=(!updates.length&&!queued.length)?"No updates available.":"No events match the current filter.";
         el("activityEmpty").style.display=any?"none":"block";
         var ua=el("updateAllBtn"); if(ua) ua.style.display=updates.length?"":"none";
         paintAll(feed);
@@ -2381,7 +2382,16 @@
       if(el("lastBuild")) el("lastBuild").textContent = v.last_build ? fmtTime(v.last_build) : "Never";
       var qr = el("queuedRow");
       if(qr) qr.style.display = v.queue_count ? "" : "none";
-      if(v.queue_count && el("queuedVal")) el("queuedVal").textContent = v.queue_count + " queued — merge on next build";
+      if(v.queue_count && el("queuedVal")){
+        var bd = v.queue_breakdown || {updates: 0, rpo: v.queue_count};
+        var parts = [];
+        if(bd.updates) parts.push(bd.updates + (bd.updates === 1 ? " update" : " updates"));
+        if(bd.rpo) parts.push(bd.rpo + (bd.rpo === 1 ? " setting change" : " setting changes"));
+        el("queuedVal").textContent = parts.join(" · ") + " queued — merge on next build";
+      }
+      /* The switch state lives in state too: keep both toggles in
+         sync with the server (a failed switch POST reverts here). */
+      if(typeof v.auto_rebuild === "boolean") syncAutoToggles(v.auto_rebuild);
       return v;
     });
   }
@@ -2606,18 +2616,6 @@
       realBuild("build");
     }
   }, true);
-  // Watch mode is not wired in this slice: intercept the Workbench
-  // toggle so it cannot claim Auto Rebuild is on.
-  var ww = el("watchWrap");
-  if(ww){
-    ww.addEventListener("change", function(e){
-      var t = el("watchToggle");
-      if(t) t.checked = !t.checked;
-      e.stopImmediatePropagation();
-      toast("Watch mode isn't wired in this slice yet — it arrives in a later slice.");
-    }, true);
-  }
-
   /* ---------- init ---------- */
   var sl = el("sourceList");
   if(sl) sl.innerHTML = '<div class="empty">Loading sources…</div>';
@@ -3703,5 +3701,163 @@
 })();
 
 </script>
+  <!-- slice 5: real Activity + update queue + Auto Rebuild wiring -->
+  <script>
+  /* ============ slice 5: Activity + update queue + Auto Rebuild ============
+     The Activity tab, the Notifications card, and the Auto Rebuild
+     switch now run on the real /api/wb/updates state — no demo data.
+     These are plain top-level declarations (not an IIFE), so the
+     later definitions of acceptUpdate/updateAll/dequeueUpdate/
+     handleAutoRebuildChange/runBuild replace the demo ones from
+     block 1, and the row templates' wb5Thumb calls resolve here. */
+
+  /* Row thumbnails: the real Modrinth icon when the update carries
+     one, otherwise the seeded canvas fallback (same as sources). */
+  function wb5Thumb(u){
+    if(u.icon_url) return '<img src="'+u.icon_url+'" width="16" height="16" style="border-radius:3px;vertical-align:middle" alt="">';
+    return '<canvas class="pix" data-seed="'+u.seed+'" width="16" height="16"></canvas>';
+  }
+  function wb5ClLines(changelog){
+    if(!changelog) return ["No changelog provided for this version."];
+    var lines = changelog.split(/\r?\n/).map(function(l){ return l.trim(); }).filter(function(l){ return l; });
+    return lines.length ? lines : ["No changelog provided for this version."];
+  }
+  function wb5Map(e, queued){
+    return {
+      id: e.slug, name: e.name,
+      from: e.old_version || "—", to: e.new_version, ver: e.new_version,
+      seed: slugify(e.name), icon_url: e.icon_url || "",
+      cl: wb5ClLines(e.changelog), queued: !!queued
+    };
+  }
+  /* Apply one /api/wb/updates view to the client arrays and render
+     through the existing renderUpdates() (Notifications card +
+     Activity feed + badges), then sync both switch toggles and the
+     real cache-size stat. */
+  function wb5ApplyView(v){
+    updates = v.available.map(function(e){ return wb5Map(e, false); });
+    queued = v.queued.map(function(e){ return wb5Map(e, true); });
+    realUpdates = updates.concat(queued);
+    renderUpdates();
+    syncAutoToggles(!!v.auto_rebuild);
+    var cs = el("statCacheSize");
+    if(cs) cs.textContent = (v.cache_size == null) ? "—" : fmtSize(v.cache_size);
+    return v;
+  }
+  function wb5RefreshUpdates(){
+    return wbApi("GET", "/api/wb/updates").then(wb5ApplyView);
+  }
+  function wb5Check(){
+    return wbApi("POST", "/api/wb/updates/check", {}).then(function(v){
+      wb5ApplyView(v);
+      var msg = "Update check complete — " + v.available.length + " update" + (v.available.length === 1 ? "" : "s") + " available, " + v.queued.length + " queued.";
+      if(v.errors && v.errors.length) msg += " " + v.errors.length + " pack" + (v.errors.length === 1 ? "" : "s") + " could not be checked.";
+      toast(msg);
+      refresh();
+      return v;
+    }).catch(function(e){ toast(e.message); });
+  }
+  function acceptUpdate(id){
+    var u = updates.filter(function(x){ return x.id === id; })[0];
+    var name = u ? u.name : "The pack";
+    var to = u ? u.to : "";
+    el("changelogScrim").classList.remove("on");
+    wbApi("POST", "/api/wb/updates/apply", {slug: id}).then(function(v){
+      wb5ApplyView(v);
+      refresh();
+      if(v.build_started){
+        showView("workbench");
+        toast("Merging — the merged pack will use the new " + name + (to ? " (" + to + ")." : "."));
+      } else if(v.already){
+        toast(name + " is already in the merge queue.");
+      } else {
+        /* Auto Rebuild off: applying only queues the update. No merge
+           runs — it merges on the next build, whenever that happens. */
+        toast(name + " added to the merge queue — nothing merges until your next build.");
+      }
+    }).catch(function(e){ toast(e.message); });
+  }
+  function updateAll(){
+    wbApi("POST", "/api/wb/updates/apply-all", {}).then(function(v){
+      wb5ApplyView(v);
+      refresh();
+      if(v.build_started){
+        showView("workbench");
+        toast("Merging — applying all updates.");
+      } else if(v.applied && v.applied.length){
+        toast(v.applied.length + " update" + (v.applied.length === 1 ? "" : "s") + " added to the merge queue — nothing merges until your next build.");
+      } else {
+        toast("No updates to apply.");
+      }
+      if(v.failed && v.failed.length) toast(v.failed.length + " update" + (v.failed.length === 1 ? "" : "s") + " could not be applied.");
+    }).catch(function(e){ toast(e.message); });
+  }
+  function dequeueUpdate(id){
+    var u = queued.filter(function(x){ return x.id === id; })[0];
+    wbApi("POST", "/api/wb/updates/dequeue", {slug: id}).then(function(v){
+      wb5ApplyView(v);
+      refresh();
+      if(v.removed) toast((u ? u.name : "The update") + " removed from the merge queue — the update is waiting to apply again.");
+    }).catch(function(e){ toast(e.message); });
+  }
+  function handleAutoRebuildChange(on){
+    wbApi("POST", "/api/wb/updates/auto", {on: !!on}).then(function(v){
+      wb5ApplyView(v);
+      refresh();
+      if(v.build_started){
+        showView("workbench");
+        toast("Merging queued updates — Auto Rebuild is on.");
+      } else {
+        toast(on
+          ? "Auto Rebuild is on — updates and changes merge automatically."
+          : "Auto Rebuild is off — updates queue and nothing merges until you build.");
+      }
+    }).catch(function(e){
+      toast(e.message);
+      refresh(); /* reverts both toggles from server state */
+    });
+  }
+  /* The demo runBuild fabricated log lines and claimed success
+     without ever calling the server — a fake "build" would leave
+     the queue undrained while claiming success. Point it at the
+     real runner, which also fixes Ctrl+Enter and the RPO rebuild
+     button (both call this global). */
+  function runBuild(){ realBuild("build"); }
+
+  /* Rewire (clone-strip, slice-1 pattern): the Sources card "Check
+     now" button and Activity's "Check for updates" both run a real
+     Modrinth check. Note this retires the engine merge-validation
+     check button: check mode stays available via the API only
+     (POST /api/wb/run {mode: "check"}). */
+  rewire("checkBtn", wb5Check);
+  rewire("activityCheckBtn", wb5Check);
+  /* Browse buttons: the real open-output route, no toast — the
+     folder simply opens (a failure still toasts honestly). */
+  document.querySelectorAll("[data-browse-output]").forEach(function(b){
+    var c = b.cloneNode(true);
+    b.replaceWith(c);
+    c.addEventListener("click", function(){
+      wbApi("GET", "/api/wb/open-output").catch(function(e){ toast(e.message); });
+    });
+  });
+  /* Fresh update data whenever the Workbench or Activity tab is
+     opened (covers queue drains from watch-triggered builds, which
+     no button press precedes). */
+  document.querySelectorAll(".navitem").forEach(function(n){
+    n.addEventListener("click", function(){
+      var v = n.getAttribute("data-view");
+      if(v === "activity" || v === "workbench") wb5RefreshUpdates().catch(function(){});
+    });
+  });
+
+  /* Real data on load, then one automatic update check (page-load
+     only — no background periodic checks in this slice). The demo
+     arrays are cleared first so no demo update can flash. */
+  updates = [];
+  queued = [];
+  realUpdates = [];
+  wb5RefreshUpdates().catch(function(){});
+  wbApi("POST", "/api/wb/updates/check", {}).then(wb5ApplyView).catch(function(){});
+  </script>
 </body>
 </html>
