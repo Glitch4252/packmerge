@@ -2350,6 +2350,7 @@
      flag guarantees a single attempt per page load even if a source
      can't be filled (no refresh loop). */
   var wbBackfillDone = false;
+  var wbMetaBackfillDone = false;
   function refresh(){
     return wbApi("GET", "/api/wb/state").then(function(v){
       var rows = v.sources.map(mapRow);
@@ -2359,6 +2360,13 @@
       if(!wbBackfillDone && v.sources.some(function(s){ return s.subscribed && !s.icon_url; })){
         wbBackfillDone = true;
         wbApi("POST", "/api/wb/sources/backfill-icons", {}).then(function(){ refresh(); }).catch(function(){});
+      }
+      /* One-shot meta backfill, same pattern as icons: sources with
+         a dash for files or version get what the cache (or their
+         subscribed version) can fill, without re-subscribing. */
+      if(!wbMetaBackfillDone && v.sources.some(function(s){ return s.files == null || s.version == null; })){
+        wbMetaBackfillDone = true;
+        wbApi("POST", "/api/wb/sources/backfill-meta", {}).then(function(){ refresh(); }).catch(function(){});
       }
       var pn = el("packName"), pd = el("packDesc");
       if(pn && document.activeElement !== pn) pn.value = v.pack_name || "";
@@ -2476,8 +2484,15 @@
       "Remove all sources from the list? Your per-file overrides and excluded paths are kept.",
       "Clear all",
       function(){
-        wbApi("DELETE", "/api/wb/sources").then(refresh)
-          .catch(function(e){ toast(e.message); });
+        wbApi("DELETE", "/api/wb/sources").then(function(){
+          refresh();
+          /* Zero sources remain, so every displayed Discover card is
+             unsubscribed — flip them from the cached results without
+             a new Modrinth search, and hide the subscription badge. */
+          discCards.forEach(function(r){ r.subscribed = false; });
+          renderDiscGridFromCache();
+          refreshSubBadge();
+        }).catch(function(e){ toast(e.message); });
       });
   });
 
@@ -3546,6 +3561,21 @@
      appends the next page with the same query + filters. The shader
      guard lives server-side, so it applies to every page. */
   var discOffset = 0, discTotal = 0, discShown = 0, discLoadingMore = false;
+  /* Cards currently displayed in Discover, kept so sources mutations
+     (e.g. Clear all) can flip their buttons without a new Modrinth
+     search: the cards are rebuilt from these same objects. */
+  var discCards = [];
+
+  function renderDiscGridFromCache(){
+    var grid = el("discGrid"); if(!grid) return;
+    if(!discCards.length) return;
+    grid.innerHTML = "";
+    discCards.forEach(function(r){ grid.appendChild(cardEl(r)); });
+    paintAll(grid);
+    var countEl = el("discCount");
+    if(countEl) countEl.textContent = discCountText(discShown, discTotal);
+    updateLoadMore();
+  }
 
   function discQueryString(offset){
     return "query=" + encodeURIComponent(el("discSearch").value)
@@ -3579,6 +3609,7 @@
     discApi("GET", "/api/wb/discover/search?" + qs).then(function(d){
       if(seq !== discSeq) return;
       var total = d.total, list = d.results || [];
+      discCards = list.slice();
       discTotal = total; discShown = list.length; discOffset = list.length;
       if(countEl){
         countEl.textContent = discCountText(discShown, total);
@@ -3617,6 +3648,7 @@
       discLoadingMore = false;
       if(seq !== discSeq) return;
       var list = d.results || [];
+      discCards = discCards.concat(list);
       list.forEach(function(r){ grid.appendChild(cardEl(r)); });
       paintAll(grid);
       discShown += list.length; discTotal = d.total; discOffset = discShown;

@@ -178,8 +178,12 @@ def modrinth_slug(value):
     return m.group(1) if m else value.strip()
 
 
-def resolve_modrinth(value, mc_version):
-    """Resolve a Modrinth pack to a concrete downloadable version."""
+def resolve_modrinth(value, mc_version, loader=None):
+    """Resolve a Modrinth pack to a concrete downloadable version.
+
+    When loader is given, only versions carrying that loader are
+    considered (e.g. "datapack" for dual-published projects whose
+    newest version is a mod). Without it, behavior is unchanged."""
     slug = modrinth_slug(value)
     project = api_get(f"{MODRINTH_API}/project/{slug}")
     title = project.get("title", slug)
@@ -188,6 +192,13 @@ def resolve_modrinth(value, mc_version):
         raise RuntimeError(f"Modrinth: no versions found for '{slug}'")
     # Newest first -- don't rely on the API's ordering.
     versions.sort(key=lambda v: v.get("date_published", ""), reverse=True)
+
+    if loader is not None:
+        versions = [v for v in versions
+                    if loader in (v.get("loaders") or [])]
+        if not versions:
+            raise RuntimeError(
+                f"Modrinth: no version of '{slug}' uses loader '{loader}'")
 
     chosen = None
     if mc_version == "latest" or mc_version is None:
@@ -973,7 +984,8 @@ def main():
         old = lock.get(lock_key, {})
 
         if "modrinth" in src:
-            info = resolve_modrinth(src["modrinth"], mc_version)
+            info = resolve_modrinth(src["modrinth"], mc_version,
+                                    loader=("datapack" if src.get("pack_type") == "datapack" else None))
             ident = {"kind": "modrinth", "version_id": info["version_id"],
                      "version_number": info["version_number"]}
             changed = old.get("version_id") != info["version_id"]

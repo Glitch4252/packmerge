@@ -253,14 +253,17 @@ def wb_modrinth_project(slug):
         return json.loads(r.read().decode("utf-8"))
 
 
-def wb_modrinth_newest_loaders(slug):
-    """Loaders of a project's newest version ([] on any failure).
+def wb_modrinth_all_loaders(slug):
+    """Every loader across ALL of a project's versions (empty on failure).
 
-    The project endpoint does NOT mark data packs: a data pack's
-    project_type is "mod" and its categories lack "datapack" (verified
-    live for Terralith and Structory). The version loaders are the
-    marker: data-pack versions carry loader "datapack", resource-pack
-    versions loader "minecraft"."""
+    Type determination must scan all versions, not just the newest:
+    dual-published projects (e.g. dungeons-and-taverns) ship mod
+    versions alongside datapack versions, and the newest version is
+    often the mod one. The project endpoint does NOT mark data packs:
+    a data pack's project_type is "mod" and its categories lack
+    "datapack" (verified live for Terralith and Structory). The
+    version loaders are the marker: data-pack versions carry loader
+    "datapack", resource-pack versions loader "minecraft"."""
     try:
         req = urllib.request.Request(
             MODRINTH_API + "/project/" + urllib.parse.quote(slug)
@@ -269,11 +272,11 @@ def wb_modrinth_newest_loaders(slug):
         with urllib.request.urlopen(req, timeout=20) as r:
             versions = json.loads(r.read().decode("utf-8"))
     except Exception:
-        return []
-    if not versions:
-        return []
-    versions.sort(key=lambda v: v.get("date_published", ""), reverse=True)
-    return versions[0].get("loaders") or []
+        return set()
+    loaders = set()
+    for v in versions or []:
+        loaders.update(v.get("loaders") or [])
+    return loaders
 
 
 def wb_inspect_zip(path):
@@ -370,9 +373,9 @@ def wb_add_url(url):
             return None, "Could not reach Modrinth (%s)." % e
         if proj.get("project_type") == "resourcepack":
             ptype = "resourcepack"
-        elif "datapack" in wb_modrinth_newest_loaders(slug):
+        elif "datapack" in wb_modrinth_all_loaders(slug):
             # Data packs report project_type "mod"; only their version
-            # loaders say "datapack" (see wb_modrinth_newest_loaders).
+            # loaders say "datapack" (see wb_modrinth_all_loaders).
             ptype = "datapack"
         else:
             return None, ("That Modrinth project is a %s, not a resource "
@@ -430,7 +433,8 @@ def wb_build_manifest():
         enabled_names.add(s.get("name") or ("source-%d" % oi))
     clean = []
     for s in enabled:
-        clean.append({k: s[k] for k in ("name", "modrinth", "url", "path")
+        clean.append({k: s[k] for k in ("name", "modrinth", "url", "path",
+                                      "pack_type")
                       if k in s})
     # Translate overrides into the filtered manifest's terms: name refs
     # stay names (the engine resolves a name to the last same-named
@@ -738,7 +742,9 @@ def wb_resolve_one(index):
     try:
         if "modrinth" in s:
             info = _engine.resolve_modrinth(
-                s["modrinth"], st.get("mc_version", "latest"))
+                s["modrinth"], st.get("mc_version", "latest"),
+                loader=("datapack" if s.get("pack_type") == "datapack"
+                        else None))
             fname, url, sha = info["filename"], info["url"], info["sha512"]
         elif "url" in s:
             url = s["url"]
@@ -1843,15 +1849,16 @@ def wb_discover_search(qs):
 
 def wb_discover_download(index, info):
     """Download a resolved Modrinth file into the scan cache.
-    Returns (downloaded_bool, error_or_None). Mirrors wb_resolve_one's
-    cache naming so scans and builds reuse the file."""
+    Returns (downloaded_bool, error_or_None, zip_path_or_None).
+    Mirrors wb_resolve_one's cache naming so scans and builds reuse
+    the file."""
     st = load_state()
     srcs = st.get("sources", [])
     if index < 0 or index >= len(srcs):
-        return False, "no such source"
+        return False, "no such source", None
     enabled = [j for j, t in enumerate(srcs) if t.get("enabled", True)]
     if index not in enabled:
-        return False, "source is disabled"
+        return False, "source is disabled", None
     ti = enabled.index(index)
     try:
         os.makedirs(WB_CACHE_DIR, exist_ok=True)
@@ -1859,8 +1866,8 @@ def wb_discover_download(index, info):
         if not os.path.exists(zpath):
             _engine.download_file(info["url"], zpath, info["sha512"])
     except Exception as e:
-        return False, str(e)[:160]
-    return True, None
+        return False, str(e)[:160], None
+    return True, None, zpath
 
 
 def wb_discover_subscribe(slug):
@@ -1881,7 +1888,7 @@ def wb_discover_subscribe(slug):
         return None, "Could not reach Modrinth (%s)." % e, 502
     if proj.get("project_type") == "resourcepack":
         ptype = "resourcepack"
-    elif "datapack" in wb_modrinth_newest_loaders(slug):
+    elif "datapack" in wb_modrinth_all_loaders(slug):
         ptype = "datapack"
     else:
         return None, ("That Modrinth project is a %s, not a resource "
@@ -1897,7 +1904,9 @@ def wb_discover_subscribe(slug):
     if existing is not None and existing.get("subscribed"):
         return {"ok": True, "already": True}, None, 200
     try:
-        info = _engine.resolve_modrinth(slug, st.get("mc_version", "latest"))
+        info = _engine.resolve_modrinth(
+            slug, st.get("mc_version", "latest"),
+            loader=("datapack" if ptype == "datapack" else None))
     except Exception as e:
         return None, "Could not resolve that pack (%s)." % e, 502
     title = proj.get("title") or slug
@@ -1909,6 +1918,7 @@ def wb_discover_subscribe(slug):
                      "subscribed": True,
                      "subscribed_slug": slug,
                      "subscribed_version": info["version_number"],
+                     "version": info["version_number"],
                      "icon_url": proj.get("icon_url")})
         idx = len(srcs) - 1
     else:
@@ -1918,9 +1928,23 @@ def wb_discover_subscribe(slug):
         existing["subscribed"] = True
         existing["subscribed_slug"] = slug
         existing["subscribed_version"] = info["version_number"]
+        existing["version"] = info["version_number"]
         existing["icon_url"] = proj.get("icon_url")
     save_state(st)
-    downloaded, dl_err = wb_discover_download(idx, info)
+    downloaded, dl_err, zpath = wb_discover_download(idx, info)
+    if downloaded and zpath:
+        # Fill the file count now from the downloaded zip, so the
+        # Sources row shows it immediately instead of a dash.
+        count, _ptype = wb_inspect_zip(zpath)
+        if count is not None:
+            st2 = load_state()
+            for s in st2.get("sources", []):
+                if (s.get("subscribed_slug") == slug or
+                        ("modrinth" in s and
+                         wb_modrinth_slug(s["modrinth"]) == slug)):
+                    s["files"] = count
+                    break
+            save_state(st2)
     return {"ok": True, "already": False, "downloaded": downloaded,
             "download_error": dl_err}, None, 200
 
@@ -1943,7 +1967,10 @@ def wb_discover_unsubscribe(slug):
             srcs.pop(i)
             save_state(st)
             return {"ok": True}, None, 200
-    return None, "No subscription found for that pack.", 404
+    # Idempotent: a stale card (source already removed, e.g. by Clear
+    # all) unsubscribes harmlessly instead of erroring, so the card
+    # flips to Subscribe like a normal success.
+    return {"ok": True, "already": False}, None, 200
 
 
 def wb_sources_backfill_icons():
@@ -1984,6 +2011,51 @@ def wb_sources_backfill_icons():
     if changed:
         save_state(st)
     return {"ok": True, "filled": filled, "skipped": skipped}
+
+
+def wb_sources_backfill_meta():
+    """Fill version/files for existing sources without re-subscribing
+    or building. Version copies from subscribed_version when known;
+    files come from the cached download when one exists (same
+    prefix-match the build fill uses). Fully offline — never
+    downloads. Sources with no cache file keep their dashes until
+    the next build fills them."""
+    st = load_state()
+    srcs = st.get("sources", [])
+    enabled = [j for j, t in enumerate(srcs) if t.get("enabled", True)]
+    filled_version, filled_files = [], []
+    changed = False
+    for i, s in enumerate(srcs):
+        name = s.get("name") or ("source-%d" % i)
+        if s.get("version") is None and s.get("subscribed_version"):
+            s["version"] = s["subscribed_version"]
+            filled_version.append(name)
+            changed = True
+        if s.get("files") is None:
+            count = None
+            if "path" in s:
+                p = s["path"] if os.path.isabs(s["path"]) else os.path.join(
+                    HERE, os.path.expanduser(s["path"]))
+                count, _pt = wb_inspect_zip(p)
+            elif i in enabled:
+                ti = enabled.index(i)
+                try:
+                    cands = sorted(
+                        fn for fn in os.listdir(WB_CACHE_DIR)
+                        if fn.startswith("%d-" % ti))
+                except OSError:
+                    cands = []
+                if cands:
+                    count, _pt = wb_inspect_zip(
+                        os.path.join(WB_CACHE_DIR, cands[0]))
+            if count is not None:
+                s["files"] = count
+                filled_files.append(name)
+                changed = True
+    if changed:
+        save_state(st)
+    return {"ok": True, "filled_version": filled_version,
+            "filled_files": filled_files}
 
 
 # ---------------------------------------------------------------- server
@@ -2359,6 +2431,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(payload)
         if parsed.path == "/api/wb/sources/backfill-icons":
             return self._json(wb_sources_backfill_icons())
+        if parsed.path == "/api/wb/sources/backfill-meta":
+            return self._json(wb_sources_backfill_meta())
         self.send_error(404)
 
     def do_DELETE(self):
