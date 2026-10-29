@@ -1,0 +1,2608 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="icon" href="data:," />
+    <title>Packmerge — Workbench</title>
+    <style>
+      :root{
+        color-scheme: light dark;
+        --bg:#f2f2f4; --panel:#ffffff; --panel-2:#f7f7f9; --raised:#ececf0;
+        --fg:#1c1c1f; --dim:#6d6d74; --faint:#a3a3ab;
+        --accent:#0a84ff; --accent-hover:#0070e0; --accent-soft:rgba(10,132,255,.12);
+        --mint:#1f9d57; --mint-soft:rgba(31,157,87,.13);
+        --amber:#c77700; --amber-soft:rgba(255,159,10,.16);
+        --danger:#d70015; --danger-soft:rgba(215,0,21,.10);
+        --violet:#7d4fd0; --violet-soft:rgba(125,79,208,.13);
+        --border:#dddde2; --border-strong:#c9c9d1;
+        --logbg:#17171a; --logfg:#d7d7db;
+        --shadow:0 1px 2px rgba(20,20,40,.05),0 8px 24px rgba(20,20,40,.06);
+        --radius:14px;
+      }
+      @media (prefers-color-scheme: dark){
+        :root{
+          --bg:#141416; --panel:#1e1e21; --panel-2:#232327; --raised:#2e2e33;
+          --fg:#f2f2f4; --dim:#9d9da6; --faint:#62626a;
+          --accent:#0a84ff; --accent-hover:#2f9bff; --accent-soft:rgba(10,132,255,.18);
+          --mint:#30d158; --mint-soft:rgba(48,209,88,.14);
+          --amber:#ff9f0a; --amber-soft:rgba(255,159,10,.15);
+          --danger:#ff453a; --danger-soft:rgba(255,69,58,.14);
+          --violet:#bf5af2; --violet-soft:rgba(191,90,242,.15);
+          --border:#333338; --border-strong:#45454c;
+          --logbg:#101012; --logfg:#d7d7db;
+          --shadow:0 1px 2px rgba(0,0,0,.35),0 10px 28px rgba(0,0,0,.28);
+        }
+      }
+      *{box-sizing:border-box}
+      html,body{height:100%}
+      body{
+        margin:0; background:var(--bg); color:var(--fg);
+        font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;
+        font-size:15px; line-height:1.45;
+        -webkit-font-smoothing:antialiased;
+      }
+      button{font-family:inherit; cursor:pointer}
+      input,select{font-family:inherit}
+      ::selection{background:var(--accent); color:#fff}
+
+      /* ---------- app frame ---------- */
+      .app{display:grid; grid-template-columns:236px minmax(0,1fr); min-height:100vh}
+      .app > *{min-width:0}
+
+      /* ---------- sidebar ---------- */
+      .side{
+        border-right:1px solid var(--border); background:var(--panel);
+        padding:18px 12px; display:flex; flex-direction:column; gap:4px;
+        position:sticky; top:0; height:100vh; overflow:auto;
+      }
+      .brand{display:flex; align-items:center; gap:10px; padding:2px 8px 16px}
+      .brand .mark{
+        width:34px; height:34px; border-radius:9px; flex:none;
+        background:linear-gradient(145deg,#0a84ff,#5e5ce6);
+        display:grid; place-items:center; color:#fff;
+        box-shadow:0 4px 12px rgba(10,132,255,.35);
+      }
+      .brand .name{font-weight:700; font-size:16px; letter-spacing:-.2px; line-height:1.1}
+      .brand .ver{font-size:11px; color:var(--dim); font-weight:600; letter-spacing:.6px; text-transform:uppercase}
+      .navlabel{font-size:11px; font-weight:700; letter-spacing:.8px; text-transform:uppercase; color:var(--faint); padding:14px 10px 5px}
+      .navitem{
+        display:flex; align-items:center; gap:10px; width:100%; text-align:left;
+        background:none; border:none; color:var(--fg); font-size:14px; font-weight:500;
+        padding:8px 10px; border-radius:9px;
+      }
+      .navitem svg{flex:none; opacity:.75}
+      .navitem:hover{background:var(--panel-2)}
+      .navitem.active{background:var(--accent-soft); color:var(--accent)}
+      .navitem.active svg{opacity:1}
+      .navitem .count{
+        margin-left:auto; font-size:11px; font-weight:700; min-width:20px; text-align:center;
+        background:var(--raised); color:var(--dim); border-radius:20px; padding:1px 6px;
+      }
+      .navitem .count.hot{background:var(--amber); color:#1c1c1f}
+      .navitem .count.blue{background:var(--accent); color:#fff}
+      .side .spacer{flex:1}
+      .engine{
+        border:1px solid var(--border); border-radius:11px; padding:10px 12px;
+        background:var(--panel-2); font-size:12.5px;
+      }
+      .engine .row{display:flex; align-items:center; gap:7px; font-weight:600}
+      .dot{width:8px; height:8px; border-radius:50%; background:var(--mint); flex:none; box-shadow:0 0 0 3px var(--mint-soft)}
+      .engine .sub{color:var(--dim); margin-top:3px; font-size:12px}
+      .concept{font-size:11.5px; color:var(--faint); padding:10px 10px 0}
+
+      /* ---------- main ---------- */
+      .main{padding:22px 26px 60px; max-width:1240px; width:100%; margin:0 auto; min-width:0}
+      .view{display:none}
+      .view.on{display:block}
+
+      .topbar{display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin-bottom:18px; min-width:0}
+      .topbar > div:first-child{min-width:0}
+      .topbar h1{font-size:24px; margin:0; letter-spacing:-.4px}
+      .topbar .sub{color:var(--dim); font-size:13.5px; margin-top:1px}
+      .topbar .right{margin-left:auto; display:flex; align-items:center; gap:9px; flex-wrap:wrap}
+
+      .btn{
+        background:var(--raised); color:var(--fg); border:1px solid transparent;
+        border-radius:9px; padding:8px 14px; font-size:13.5px; font-weight:600;
+        display:inline-flex; align-items:center; gap:7px;
+      }
+      .btn:hover{filter:brightness(1.07)}
+      .btn.accent{background:var(--accent); color:#fff}
+      .btn.accent:hover{background:var(--accent-hover)}
+      .btn.ghost{background:none; border-color:var(--border); color:var(--fg)}
+      .btn.small{padding:5px 10px; font-size:12.5px; border-radius:8px}
+      .btn:disabled{opacity:.45; cursor:default}
+      .minibtn{
+        display:inline-flex; align-items:center; gap:5px; vertical-align:middle;
+        background:var(--raised); color:var(--fg); border:1px solid transparent;
+        border-radius:7px; padding:2px 8px; font-size:12px; font-weight:600; margin-left:6px;
+      }
+      .minibtn:hover{filter:brightness(1.07)}
+      .minibtn svg{flex:none; opacity:.75}
+      kbd{
+        font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:11px;
+        background:var(--panel-2); border:1px solid var(--border-strong); border-bottom-width:2px;
+        border-radius:5px; padding:1px 5px; color:var(--dim);
+      }
+
+      /* switch */
+      .switch{position:relative; width:40px; height:23px; flex:none; display:inline-block}
+      .switch input{opacity:0; width:0; height:0; position:absolute}
+      .switch .track{
+        position:absolute; inset:0; border-radius:20px; background:var(--border-strong);
+        transition:background .18s;
+      }
+      .switch .track::after{
+        content:""; position:absolute; top:2.5px; left:3px; width:18px; height:18px;
+        border-radius:50%; background:#fff; box-shadow:0 1px 3px rgba(0,0,0,.3); transition:left .18s;
+      }
+      .switch input:checked + .track{background:var(--mint)}
+      .switch input:checked + .track::after{left:19px}
+      .switch input:focus-visible + .track{outline:2px solid var(--accent); outline-offset:2px}
+      .watchwrap{display:flex; align-items:center; gap:8px; font-size:13px; font-weight:600; color:var(--dim)}
+      .watchwrap.on{color:var(--fg)}
+      .watchmeta{display:flex; flex-direction:column; line-height:1.15}
+      .watchlabel{font-size:13px}
+      .watchhint{font-size:11px; font-weight:500; color:var(--faint)}
+      .engine .row{justify-content:center; font-size:13px; letter-spacing:.02em}
+      /* ---------- guided tour ---------- */
+      .tour-scrim{position:fixed; inset:0; z-index:90; display:none}
+      .tour-scrim.on{display:block}
+      .tour-highlight{position:fixed; z-index:91; border:2px solid var(--accent); border-radius:12px; box-shadow:0 0 0 9999px rgba(10,12,18,.58); pointer-events:none; transition:top .25s ease,left .25s ease,width .25s ease,height .25s ease}
+      .tour-card{position:fixed; z-index:92; width:min(92vw,368px); background:var(--panel); color:var(--fg); border:1px solid var(--border); border-radius:14px; box-shadow:0 24px 60px rgba(0,0,0,.35); padding:18px}
+      .tour-card .tour-step{font-size:11px; font-weight:700; letter-spacing:.7px; text-transform:uppercase; color:var(--accent); margin-bottom:6px}
+      .tour-card h3{margin:0 0 6px; font-size:17px; line-height:1.25}
+      .tour-card p{margin:0; color:var(--dim); font-size:13.5px; line-height:1.55}
+      .tour-dots{display:flex; gap:6px; margin:14px 0 4px}
+      .tour-dots span{width:7px; height:7px; border-radius:50%; background:var(--border-strong)}
+      .tour-dots span.on{background:var(--accent)}
+      .tour-actions{display:flex; align-items:center; gap:8px; margin-top:12px; flex-wrap:wrap}
+      .tour-actions .spacer{flex:1}
+      @media (prefers-reduced-motion: reduce){ .tour-highlight{transition:none} }
+
+      /* ---------- layout columns ---------- */
+      .cols{display:grid; grid-template-columns:minmax(0,1fr) 348px; gap:18px; align-items:start}
+      .cols > *{min-width:0}
+      .card{
+        background:var(--panel); border:1px solid var(--border); border-radius:var(--radius);
+        box-shadow:var(--shadow); padding:16px; margin-bottom:18px;
+      }
+      .card > h2{
+        font-size:12px; font-weight:700; letter-spacing:.7px; text-transform:uppercase;
+        color:var(--dim); margin:0 0 6px; display:flex; align-items:center; gap:8px;
+      }
+      .card > h2 .right{margin-left:auto; text-transform:none; letter-spacing:0}
+      .card .hint{color:var(--dim); font-size:13px; margin:0 0 12px}
+
+      /* ---------- sources ---------- */
+      .grouphead{
+        display:flex; align-items:center; gap:8px; margin:16px 0 8px;
+        font-size:12.5px; font-weight:700; color:var(--dim);
+      }
+      .grouphead:first-of-type{margin-top:6px}
+      .grouphead .line{flex:1; height:1px; background:var(--border)}
+      .grouphead .gcount{font-weight:600; color:var(--faint); font-size:12px}
+      .src{
+        display:flex; align-items:center; gap:11px; padding:10px 11px;
+        border:1px solid var(--border); border-radius:11px; background:var(--panel-2);
+        margin-bottom:8px;
+      }
+      .src.off{opacity:.52}
+      .src.dragging{opacity:.55}
+      .src .grip{color:var(--faint); flex:none; cursor:grab; display:grid; place-items:center}
+      .src .thumb{
+        width:38px; height:38px; border-radius:9px; flex:none; overflow:hidden;
+        border:1px solid var(--border); image-rendering:pixelated; background:#3a5f2a;
+      }
+      .src .thumb canvas{width:100%; height:100%; display:block; image-rendering:pixelated}
+      .src .meta{min-width:0; flex:1}
+      .src .nm{font-weight:650; font-size:14.5px; display:flex; align-items:center; gap:7px; flex-wrap:wrap}
+      .src .det{color:var(--dim); font-size:12.5px; margin-top:1px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+      .src .det .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:11.5px}
+      .badge{
+        font-size:10.5px; font-weight:700; letter-spacing:.4px; padding:2px 7px; border-radius:20px;
+        background:var(--raised); color:var(--dim); white-space:nowrap;
+      }
+      .badge.rp{background:var(--accent-soft); color:var(--accent)}
+      .badge.dp{background:var(--mint-soft); color:var(--mint)}
+      .badge.rpo{background:var(--violet-soft); color:var(--violet)}
+      .badge.sub{background:var(--raised); color:var(--dim)}
+      .badge.pin{background:var(--raised); color:var(--dim)}
+      .updot{width:8px; height:8px; border-radius:50%; background:var(--amber); flex:none}
+      .src .upd{font-size:11.5px; font-weight:700; color:var(--amber); white-space:nowrap}
+      .src .prio{
+        font-size:10px; font-weight:700; letter-spacing:.5px; color:var(--faint); text-align:center; flex:none; width:44px;
+      }
+      .src .prio b{display:block; font-size:14px; color:var(--dim)}
+      .iconbtn{
+        background:none; border:none; color:var(--dim); border-radius:7px; padding:6px;
+        display:grid; place-items:center; flex:none;
+      }
+      .iconbtn:hover{background:var(--raised); color:var(--fg)}
+      .addrow{display:flex; gap:8px; flex-wrap:wrap; margin-top:12px}
+
+      /* ---------- build card ---------- */
+      .outrow{display:flex; justify-content:space-between; gap:10px; font-size:13px; padding:6px 0; border-bottom:1px dashed var(--border)}
+      .outrow:last-of-type{border-bottom:none}
+      .outrow .k{color:var(--dim)}
+      .outrow .v{font-weight:600; text-align:right; word-break:break-all}
+      .outrow .v.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; font-weight:500}
+      .progress{height:8px; border-radius:6px; background:var(--raised); overflow:hidden; margin:12px 0 6px; display:none}
+      .progress.on{display:block}
+      .progress .bar{height:100%; width:0%; background:linear-gradient(90deg,var(--accent),#5e5ce6); border-radius:6px; transition:width .3s ease}
+      .bigbuild{width:100%; justify-content:center; padding:11px; font-size:14.5px; margin-top:10px}
+      .build-fields{margin:2px 0 10px}
+      .build-fields .field{margin-bottom:10px}
+      .build-fields .field:last-child{margin-bottom:2px}
+      .build-fields label{display:block; font-size:11.5px; font-weight:700; letter-spacing:.5px; text-transform:uppercase; color:var(--faint); margin-bottom:5px}
+      .build-fields input[type="text"],.build-fields textarea{
+        width:100%; background:var(--panel-2); color:var(--fg);
+        border:1px solid var(--border); border-radius:10px; padding:9px 11px; font-size:13.5px; font-family:inherit;
+      }
+      .build-fields textarea{resize:vertical; min-height:54px; line-height:1.45}
+      .build-fields input[type="text"]:focus,.build-fields textarea:focus{outline:none; border-color:var(--accent)}
+      .build-fields .filehint{font-size:12px; color:var(--dim); margin-top:5px}
+      .build-fields .filehint .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:11.5px; font-weight:600; color:var(--fg)}
+      .log{
+        background:var(--logbg); color:var(--logfg); border-radius:10px; padding:11px 12px;
+        font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; line-height:1.55;
+        max-height:190px; overflow:auto; white-space:pre-wrap; margin-top:12px;
+      }
+      .log .warn{color:#ffb340}.log .ok{color:#30d158}.log .dim{color:#8e8e96}
+
+      /* ---------- updates ---------- */
+      .upd-row{display:flex; gap:11px; padding:10px 0; border-bottom:1px solid var(--border)}
+      .upd-row:last-child{border-bottom:none; padding-bottom:2px}
+      .upd-row .thumb{width:34px; height:34px; border-radius:8px; overflow:hidden; flex:none; border:1px solid var(--border)}
+      .upd-row .thumb canvas{width:100%; height:100%; display:block; image-rendering:pixelated}
+      .upd-row .m{flex:1; min-width:0}
+      .upd-row .n{font-weight:650; font-size:13.5px}
+      .upd-row .d{color:var(--dim); font-size:12px}
+      .upd-row .acts{display:flex; gap:6px; align-items:flex-start}
+
+      /* ---------- conflict panel ---------- */
+      .conflict-path{
+        font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12.5px;
+        background:var(--panel-2); border:1px solid var(--border); border-radius:8px;
+        padding:7px 10px; word-break:break-all; margin-bottom:12px;
+      }
+      .versus{display:grid; grid-template-columns:1fr auto 1fr; gap:12px; align-items:stretch}
+      .side-pick{
+        display:block;
+        border:2px solid var(--border); border-radius:12px; padding:12px; background:var(--panel-2);
+        text-align:left; color:var(--fg); width:100%;
+      }
+      .side-pick .tex,.side-pick .pn{display:block}
+      .side-pick:hover{border-color:var(--border-strong)}
+      .side-pick.winner{border-color:var(--accent); background:var(--accent-soft)}
+      .side-pick .tex{
+        height:92px; border-radius:9px; overflow:hidden; border:1px solid var(--border); margin-bottom:10px;
+      }
+      .side-pick .tex canvas{width:100%; height:100%; display:block; image-rendering:pixelated}
+      .side-pick .pn{font-weight:700; font-size:14px}
+      .side-pick .pd{color:var(--dim); font-size:12px; margin-top:2px}
+      .side-pick .win-tag{
+        display:none; margin-top:9px; font-size:11px; font-weight:800; letter-spacing:.5px;
+        color:var(--accent); text-transform:uppercase;
+      }
+      .side-pick.winner .win-tag{display:block}
+      .vs{align-self:center; font-weight:800; color:var(--faint); font-size:13px}
+      .conflict-nav{display:flex; gap:8px; align-items:center; margin-top:14px; flex-wrap:wrap}
+      .conflict-nav .pos{color:var(--dim); font-size:12.5px; font-weight:600}
+      .smartnote{
+        display:flex; gap:9px; font-size:12.5px; color:var(--dim);
+        background:var(--mint-soft); border-radius:10px; padding:9px 11px; margin-top:12px;
+      }
+      .smartnote svg{flex:none; margin-top:1px; color:var(--mint)}
+
+      /* ---------- workbench conflict summary ---------- */
+      .conflict-mini{display:flex; gap:16px; align-items:center; flex-wrap:wrap}
+      .conflict-mini .big{font-size:26px; font-weight:800; letter-spacing:-.5px; line-height:1}
+      .conflict-mini .lbl{color:var(--dim); font-size:12.5px; margin-top:3px}
+      .conflict-mini .next{flex:1; min-width:min(250px,100%); border-left:1px solid var(--border); padding-left:16px}
+      .conflict-mini .next .k{font-size:11px; font-weight:700; letter-spacing:.6px; text-transform:uppercase; color:var(--faint)}
+      .conflict-mini .next code{display:block; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; margin:3px 0 2px; word-break:break-all}
+      .conflict-mini .next .p{color:var(--dim); font-size:12.5px}
+
+      /* ---------- conflicts view ---------- */
+      .conflict-stats{display:grid; grid-template-columns:repeat(auto-fit,minmax(min(180px,100%),1fr)); gap:10px; margin-bottom:18px}
+      .stat{background:var(--panel); border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow); padding:13px 15px}
+      .stat .n{font-size:22px; font-weight:800; letter-spacing:-.4px; line-height:1.05}
+      .stat .t{color:var(--dim); font-size:12.5px; margin-top:2px}
+      .stat.warn .n{color:var(--amber)}
+      .stat.ok .n{color:var(--mint)}
+      .stat.switchstat{display:flex; align-items:center}
+      .conflict-toolbar{display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:14px}
+      .conflict-toolbar input{
+        flex:1; min-width:min(220px,100%); background:var(--panel-2); color:var(--fg);
+        border:1px solid var(--border); border-radius:10px; padding:9px 12px; font-size:14px;
+      }
+      .conflict-toolbar input:focus{outline:none; border-color:var(--accent)}
+      .chip{
+        background:var(--panel-2); color:var(--dim); border:1px solid var(--border);
+        border-radius:20px; padding:6px 12px; font-size:12.5px; font-weight:600;
+      }
+      .chip:hover{border-color:var(--border-strong); color:var(--fg)}
+      .chip.active{background:var(--accent); border-color:var(--accent); color:#fff}
+      .bulkbar{
+        display:flex; gap:8px; align-items:center; flex-wrap:wrap;
+        background:var(--panel-2); border:1px solid var(--border); border-radius:11px; padding:10px 12px; margin-bottom:6px;
+      }
+      .bulkbar .bt{font-size:13px; font-weight:650}
+      .bulkbar .bs{color:var(--dim); font-size:12.5px; flex:1; min-width:min(220px,100%)}
+      .queue-group{margin-top:16px}
+      .queue-group .qh{display:flex; align-items:center; gap:8px; font-size:12.5px; font-weight:700; color:var(--dim); margin-bottom:8px}
+      .queue-group .qh .line{flex:1; height:1px; background:var(--border)}
+      .queue-group .qh .qc{color:var(--faint); font-weight:600}
+      .crow{
+        display:flex; gap:11px; align-items:center; width:100%; text-align:left;
+        background:var(--panel-2); border:1px solid var(--border); border-radius:11px;
+        padding:10px 12px; margin-bottom:8px; color:var(--fg); font-size:13.5px;
+      }
+      button.crow{cursor:pointer}
+      button.crow:hover{border-color:var(--border-strong)}
+      .crow.selected{border-color:var(--accent); box-shadow:0 0 0 1px var(--accent)}
+      .crow.resolved{opacity:.62}
+      .crow .cp{min-width:0; flex:1}
+      .crow .cp .path{font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12.5px; word-break:break-all}
+      .crow .cp .parties{color:var(--dim); font-size:12.5px; margin-top:1px}
+      .pill{font-size:10.5px; font-weight:700; letter-spacing:.4px; padding:2px 8px; border-radius:20px; white-space:nowrap; flex:none}
+      .pill.open{background:var(--amber-soft); color:var(--amber)}
+      .pill.smart{background:var(--mint-soft); color:var(--mint)}
+      .pill.done{background:var(--raised); color:var(--dim)}
+      .pill.vanilla{background:var(--danger-soft); color:var(--danger)}
+      .pill.kind{background:var(--raised); color:var(--dim)}
+      .crow .acts{display:flex; gap:6px; flex:none; flex-wrap:wrap}
+      .diff-head{display:flex; gap:10px; align-items:baseline; flex-wrap:wrap; margin-bottom:10px}
+      .diff-head .dp{font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12.5px; word-break:break-all}
+      .diff-table{border:1px solid var(--border); border-radius:12px; overflow:hidden}
+      .diff-row{display:grid; grid-template-columns:minmax(120px,.8fr) 1fr 1fr; gap:10px; align-items:stretch; padding:10px 12px; border-bottom:1px solid var(--border)}
+      .diff-row:last-child{border-bottom:none}
+      .diff-row.head{background:var(--panel-2); font-size:12px; font-weight:700; color:var(--dim); padding-top:8px; padding-bottom:8px}
+      .diff-row > div{padding:9px 2px; min-width:0; word-break:break-word}
+      .diff-row .dk{font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px}
+      .diff-cell{
+        font-size:13px; color:var(--fg); text-align:left; width:100%;
+        border:1.5px solid var(--border); border-radius:10px; background:var(--panel-2);
+        padding:9px 12px; transition:border-color .15s ease, background .15s ease;
+      }
+      button.diff-cell{cursor:pointer}
+      button.diff-cell:hover{border-color:var(--border-strong); background:var(--raised)}
+      button.diff-cell:focus-visible{outline:2px solid var(--accent); outline-offset:2px}
+      .diff-cell.chosen{background:var(--accent-soft); border-color:var(--accent)}
+      .diff-cell .tag{display:block; font-size:10.5px; font-weight:700; letter-spacing:.4px; text-transform:uppercase; color:var(--accent); margin-top:5px; visibility:hidden}
+      .diff-cell.chosen .tag{visibility:visible}
+      @media (prefers-reduced-motion: reduce){ .diff-cell{transition:none} }
+      @media (max-width:760px){
+        .conflict-mini .next{border-left:none; padding-left:0}
+        .diff-row{grid-template-columns:1fr}
+        .diff-row.head{display:none}
+      }
+
+      /* ---------- RPO view ---------- */
+      .rpo-group{margin-bottom:20px}
+      .rpo-group .gh{display:flex; align-items:center; gap:9px; margin-bottom:4px; flex-wrap:wrap}
+      .rpo-group .gh .n{font-weight:700; font-size:15.5px}
+      .rpo-group .ns{font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:11.5px; color:var(--dim)}
+      .toggle-row{
+        display:flex; align-items:center; gap:12px; padding:11px 2px; border-bottom:1px solid var(--border);
+      }
+      .toggle-row:last-child{border-bottom:none}
+      .toggle-row .m{flex:1; min-width:0}
+      .toggle-row .n{font-weight:600; font-size:14px}
+      .toggle-row .n .key{font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:11.5px; color:var(--faint); font-weight:500; margin-left:7px}
+      .toggle-row .d{color:var(--dim); font-size:12.5px}
+      .toggle-row .files{font-size:11.5px; font-weight:700; color:var(--violet); white-space:nowrap}
+      .toggle-row{flex-wrap:wrap}
+      .mono-inline{font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.92em}
+      .rpo-pending{
+        display:flex; gap:12px; align-items:center; flex-wrap:wrap;
+        background:var(--amber-soft); border:1px solid var(--border); border-radius:11px;
+        padding:11px 14px; margin-bottom:18px; font-size:13.5px;
+      }
+      .rpo-pending .pt{flex:1; min-width:min(240px,100%)}
+      .rpo-group:last-child{margin-bottom:2px}
+      .rpo-group .gh .gsum{margin-left:auto; color:var(--dim); font-size:12.5px; font-weight:600}
+      .gmaster{display:flex; align-items:center; gap:7px; font-size:12px; font-weight:700; color:var(--dim)}
+      .toggle-wrap{border-bottom:1px solid var(--border)}
+      .toggle-wrap:last-child{border-bottom:none}
+      .toggle-wrap .toggle-row{border-bottom:none}
+      .gated{display:none; padding:0 2px 13px}
+      .gated.on{display:block}
+      .gated .cond{
+        font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px;
+        background:var(--panel-2); border:1px solid var(--border); border-radius:8px;
+        padding:7px 10px; margin-bottom:8px; word-break:break-all;
+      }
+      .gated .gpath{font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; color:var(--dim); padding:2px}
+      .gated .gpath.dim{color:var(--faint)}
+      .rpo-select{
+        background:var(--panel-2); color:var(--fg); border:1px solid var(--border);
+        border-radius:8px; padding:6px 9px; font-size:13px; font-weight:600;
+      }
+      .rpo-range{display:flex; align-items:center; gap:9px}
+      .rpo-range input{accent-color:var(--accent); width:110px}
+      .rpo-range b{font-size:13px; min-width:36px}
+      .ns-row{display:flex; align-items:center; gap:12px; padding:10px 2px; border-bottom:1px solid var(--border); flex-wrap:wrap}
+      .ns-row:last-child{border-bottom:none}
+      .ns-name{
+        font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:13px; font-weight:700;
+        background:var(--violet-soft); color:var(--violet); border-radius:7px; padding:3px 9px;
+      }
+      .ns-meta{color:var(--dim); font-size:12.5px; flex:1; min-width:min(200px,100%)}
+      .ns-input{
+        background:var(--panel-2); color:var(--fg); border:1px solid var(--border);
+        border-radius:8px; padding:7px 10px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:13px; width:170px;
+      }
+
+      /* ---------- discover view ---------- */
+      .searchbar{display:flex; gap:9px; margin-bottom:16px; flex-wrap:wrap}
+      .searchbar input{
+        flex:1; min-width:220px; background:var(--panel); color:var(--fg);
+        border:1px solid var(--border); border-radius:10px; padding:10px 13px; font-size:14.5px;
+      }
+      .searchbar input:focus{outline:none; border-color:var(--accent)}
+      .disc-grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(min(240px,100%),1fr)); gap:14px}
+      .disc{
+        background:var(--panel); border:1px solid var(--border); border-radius:var(--radius);
+        box-shadow:var(--shadow); overflow:hidden;
+      }
+      .disc .banner{height:86px}
+      .disc .banner canvas{width:100%; height:100%; display:block; image-rendering:pixelated}
+      .disc .b{padding:13px 14px 14px}
+      .disc .n{font-weight:700; font-size:15px; display:flex; gap:7px; align-items:center; flex-wrap:wrap}
+      .disc .a{color:var(--dim); font-size:12.5px; margin-top:1px}
+      .disc .d{color:var(--dim); font-size:13px; margin:8px 0 12px; min-height:38px}
+      .disc .f{display:flex; align-items:center; gap:8px}
+      .disc .dl{color:var(--faint); font-size:12px; font-weight:600}
+
+      /* ---------- placeholder view ---------- */
+      .soon{
+        background:var(--panel); border:1px dashed var(--border-strong); border-radius:var(--radius);
+        padding:34px 26px; text-align:center;
+      }
+      .soon .t{font-size:17px; font-weight:700; margin-bottom:6px}
+      .soon p{color:var(--dim); max-width:520px; margin:0 auto 14px; font-size:14px}
+      .soon ul{display:inline-block; text-align:left; color:var(--dim); font-size:13.5px; margin:0; padding-left:18px}
+      .soon li{margin:3px 0}
+
+      /* ---------- modal / toast ---------- */
+      .scrim{
+        position:fixed; inset:0; background:rgba(0,0,0,.5); z-index:60;
+        display:none; align-items:flex-start; justify-content:center; padding:8vh 16px 16px;
+      }
+      .scrim.on{display:flex}
+      .dialog{
+        background:var(--panel); border:1px solid var(--border); border-radius:14px;
+        box-shadow:0 24px 60px rgba(0,0,0,.35); width:100%; max-width:520px; padding:20px;
+        max-height:82vh; overflow:auto;
+      }
+      .dialog h3{margin:0 0 4px; font-size:17px}
+      .dialog .sub{color:var(--dim); font-size:13px; margin:0 0 12px}
+      .dialog .cl{font-size:13.5px; margin:0; padding-left:18px}
+      .dialog .cl li{margin:5px 0}
+      .dialog .foot{display:flex; gap:8px; justify-content:flex-end; margin-top:18px; flex-wrap:wrap}
+      .dialog input.url-input{
+        width:100%; background:var(--panel-2); color:var(--fg);
+        border:1px solid var(--border); border-radius:10px; padding:10px 12px;
+        font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:13px;
+      }
+      .dialog input.url-input:focus{outline:none; border-color:var(--accent)}
+      .url-err{color:var(--danger); font-size:12.5px; font-weight:600; margin-top:7px}
+      #toasts{position:fixed; bottom:20px; left:50%; transform:translateX(-50%); z-index:80; display:flex; flex-direction:column; gap:8px; align-items:center; width:min(92vw,440px)}
+      .toast{
+        background:var(--fg); color:var(--bg); font-size:13.5px; font-weight:600;
+        border-radius:11px; padding:11px 16px; box-shadow:0 10px 30px rgba(0,0,0,.3);
+        display:flex; gap:9px; align-items:center; max-width:100%;
+        animation:tin .22s ease;
+      }
+      @keyframes tin{from{opacity:0; transform:translateY(8px)}to{opacity:1; transform:none}}
+      @media (prefers-reduced-motion: reduce){ .toast{animation:none} .progress .bar{transition:none} }
+
+      /* ---------- discover filters ---------- */
+      .disc-toolbar{display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap; margin-bottom:16px}
+      .filter-field{display:flex; flex-direction:column; gap:4px; font-size:11.5px; font-weight:700; letter-spacing:.5px; text-transform:uppercase; color:var(--faint)}
+      .filter-field .rpo-select{text-transform:none; letter-spacing:0}
+      .disc-count{margin-left:auto; color:var(--dim); font-size:12.5px; font-weight:600; padding-bottom:7px}
+      .disc .meta-line{color:var(--faint); font-size:12px; margin-top:6px}
+
+      /* ---------- activity feed ---------- */
+      .act-row{display:flex; gap:12px; padding:13px 2px; border-bottom:1px solid var(--border); align-items:flex-start}
+      .act-row:last-child{border-bottom:none}
+      .act-ic{width:34px; height:34px; border-radius:9px; flex:none; display:grid; place-items:center; overflow:hidden; border:1px solid var(--border)}
+      .act-ic canvas{width:100%; height:100%; display:block; image-rendering:pixelated}
+      .act-ic.plain{background:var(--panel-2); color:var(--dim)}
+      .act-row .m{flex:1; min-width:0}
+      .act-row .n{font-weight:650; font-size:14px; display:flex; gap:8px; align-items:center; flex-wrap:wrap}
+      .act-row .d{color:var(--dim); font-size:12.5px; margin-top:1px}
+      .act-row .acts{display:flex; gap:6px; flex:none; flex-wrap:wrap}
+      .notif-row{cursor:pointer}
+
+      /* ---------- inspector drawer ---------- */
+      .drawer-wrap{position:fixed; inset:0; z-index:70; display:none}
+      .drawer-wrap.on{display:block}
+      .drawer-scrim{position:absolute; inset:0; background:rgba(0,0,0,.5)}
+      .drawer{
+        position:absolute; top:0; right:0; height:100%; width:min(440px,94vw); overflow:auto;
+        background:var(--panel); border-left:1px solid var(--border); box-shadow:-18px 0 44px rgba(0,0,0,.28);
+        padding:18px; animation:din .22s ease;
+      }
+      @keyframes din{from{transform:translateX(24px); opacity:.6}to{transform:none; opacity:1}}
+      @media (prefers-reduced-motion: reduce){ .drawer{animation:none} }
+      .drawer-head{display:flex; gap:11px; align-items:center; margin-bottom:14px}
+      .drawer-head .thumb{width:40px; height:40px; border-radius:9px; overflow:hidden; flex:none; border:1px solid var(--border)}
+      .drawer-head .thumb canvas{width:100%; height:100%; display:block; image-rendering:pixelated}
+      .drawer-head .m{flex:1; min-width:0}
+      .drawer-head h3{margin:0; font-size:16.5px}
+      .drawer-head .d{color:var(--dim); font-size:12.5px}
+      .drawer-h{font-size:12px; font-weight:700; letter-spacing:.7px; text-transform:uppercase; color:var(--dim); margin:18px 0 8px}
+      .insp-file{font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; padding:5px 9px; border:1px solid var(--border); border-radius:8px; background:var(--panel-2); margin-bottom:6px; word-break:break-all}
+      .insp-file .tag{float:right; font-family:inherit}
+
+      /* ---------- responsive ---------- */
+      @media (max-width:1020px){
+        .cols{grid-template-columns:minmax(0,1fr)}
+      }
+      @media (max-width:760px){
+        .app{grid-template-columns:1fr}
+        .side{
+          position:static; height:auto; flex-direction:row; flex-wrap:wrap; align-items:center;
+          border-right:none; border-bottom:1px solid var(--border); padding:12px;
+        }
+        .brand{padding:0 6px 0 2px}
+        .brand .ver{display:none}
+        .navlabel,.side .spacer,.engine,.concept{display:none}
+        .navitem{width:auto; padding:7px 10px}
+        .navitem .lbl{display:none}
+        .navitem .count{margin-left:2px}
+        .main{padding:16px 14px 50px}
+        .versus{grid-template-columns:1fr}
+        .vs{text-align:center}
+        .topbar h1{font-size:21px}
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <!-- ============ SIDEBAR ============ -->
+      <aside class="side">
+        <div class="brand">
+          <div class="mark" aria-hidden="true">
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 3 7v10l9 5 9-5V7l-9-5Z"/><path d="M3 7l9 5 9-5"/><path d="M12 12v10"/></svg>
+          </div>
+          <div>
+            <div class="name">packmerge</div>
+            <div class="ver">2.1.1 · Workbench</div>
+          </div>
+        </div>
+
+        <div class="navlabel">Build</div>
+        <button class="navitem active" data-view="workbench">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+          <span class="lbl">Workbench</span>
+        </button>
+        <button class="navitem" data-view="conflicts">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v4a2 2 0 0 0 2 2h9"/><path d="m16 5 3 4-3 4"/><path d="M16 21v-4a2 2 0 0 0-2-2H5"/><path d="m8 17-3-4 3-4"/></svg>
+          <span class="lbl">Conflicts</span><span class="count hot" id="navConflictCount">3</span>
+        </button>
+        <button class="navitem" data-view="rpo">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21v-7"/><path d="M4 10V3"/><path d="M12 21v-9"/><path d="M12 8V3"/><path d="M20 21v-5"/><path d="M20 12V3"/><path d="M1 14h6"/><path d="M9 8h6"/><path d="M17 16h6"/></svg>
+          <span class="lbl">RPO Toggles</span><span class="count hot" id="navRpoCount" style="display:none"></span>
+        </button>
+        <button class="navitem" data-view="discover">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+          <span class="lbl">Discover</span><span class="count blue" id="navSubCount" style="display:none"></span>
+        </button>
+
+        <div class="navlabel">Library</div>
+        <button class="navitem" data-view="activity">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 3"/></svg>
+          <span class="lbl">Activity</span><span class="count hot" id="navActivityCount">2</span>
+        </button>
+
+        <div class="spacer"></div>
+        <div class="engine">
+          <div class="row">v2.1.1</div>
+          <div class="sub">Packmerge app itself · up to date. App updates are separate from the pack updates in Activity.</div>
+          <button class="btn small ghost" id="appUpdateBtn" style="margin-top:8px">Check for app updates</button>
+        </div>
+        <div class="concept">Interactive concept — content shown is for demonstration purposes.</div>
+      </aside>
+
+      <!-- ============ MAIN ============ -->
+      <main class="main">
+
+        <!-- ======== WORKBENCH ======== -->
+        <section class="view on" id="view-workbench">
+          <div class="topbar">
+            <div>
+              <h1>Workbench</h1>
+              <div class="sub">Sources merge in list order — when two packs ship the same file, the one lower in the list wins.</div>
+            </div>
+            <div class="right">
+              <button class="btn accent" id="tourBtn" type="button">Take the tour</button>
+              <label class="watchwrap" id="watchWrap" title="Auto Rebuild: when on, local file changes merge automatically and updates downloaded in Activity merge automatically. When off, updates wait for your click before anything merges.">
+                <span class="switch"><input type="checkbox" id="watchToggle"><span class="track"></span></span>
+                <span class="watchmeta"><span class="watchlabel">Watch for changes</span><span class="watchhint">Auto Rebuild — changes &amp; updates</span></span>
+              </label>
+            </div>
+          </div>
+
+          <div class="cols">
+            <!-- left: sources + conflicts -->
+            <div>
+              <div class="card" id="sourcesCard">
+                <h2>Sources <span class="right"><button class="btn small ghost" id="checkBtn">Check now</button></span></h2>
+                <p class="hint">Drag to reorder priority. Subscribed sources check for updates automatically. Changes are applied on the next build.</p>
+                <div id="sourceList"></div>
+                <div class="addrow">
+                  <button class="btn" id="addUrlBtn">+ Add URL</button>
+                  <button class="btn" id="addLocalBtn">+ Add local file…</button>
+                  <button class="btn" id="discoverBtn">Browse Modrinth</button>
+                  <button class="btn ghost" id="clearBtn" style="margin-left:auto">Clear all</button>
+                </div>
+              </div>
+
+              <div class="card" id="conflictCard">
+                <h2>Conflicts <span class="right"><button class="btn small ghost" id="openConflictsBtn">Open Conflicts</button></span></h2>
+                <div class="conflict-mini">
+                  <div>
+                    <div class="big" id="wbOpenCount">3</div>
+                    <div class="lbl">need a decision</div>
+                  </div>
+                  <div class="next">
+                    <span class="k">Next up</span>
+                    <code id="wbNextPath">assets/minecraft/textures/block/grass_block_top.png</code>
+                    <span class="p" id="wbNextParties">Faithful 32× vs Stay True · texture</span>
+                  </div>
+                  <button class="btn accent" id="reviewNextBtn">Review next conflict</button>
+                </div>
+                <div class="smartnote">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+                  <span><b>Everything else is handled:</b> 2 files were smart-merged automatically and 1 was settled by list priority. Comparison, bulk actions, and JSON diffs live on the Conflicts page — the Workbench only tracks status and the next item.</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- right rail -->
+            <div>
+              <div class="card" id="buildCard">
+                <h2>Build</h2>
+                <div class="build-fields">
+                  <div class="field">
+                    <label for="packName">Pack name</label>
+                    <input type="text" id="packName" value="packmerge" autocomplete="off" spellcheck="false">
+                    <div class="filehint">Saves as <span class="mono" id="packFileName">packmerge.zip</span> in the output folder</div>
+                  </div>
+                  <div class="field">
+                    <label for="packDesc">Pack description</label>
+                    <textarea id="packDesc" rows="2">Merged with packmerge</textarea>
+                    <div class="filehint">Written to <span class="mono">pack.mcmeta</span> — shown in-game in the pack list.</div>
+                  </div>
+                </div>
+                <div class="outrow"><span class="k">Output destination</span><span class="v">Downloads folder<button class="minibtn" data-browse-output title="Open the Downloads folder to browse the output"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>Browse</button></span></div>
+                <div class="outrow"><span class="k">Estimated output</span><span class="v">48.2 MB</span></div>
+                <div class="outrow"><span class="k">Sources included</span><span class="v" id="srcIncludedVal">7 of 8 · 1 disabled</span></div>
+                <div class="outrow"><span class="k">Last build</span><span class="v" id="lastBuild">Today, 9:41 PM · 3.8s</span></div>
+                <div class="outrow" id="queuedRow" style="display:none"><span class="k">Merge queue</span><span class="v" id="queuedVal"></span></div>
+                <div class="progress" id="buildProgress"><div class="bar" id="buildBar"></div></div>
+                <button class="btn accent bigbuild" id="buildBtn">Merge packs <kbd style="background:rgba(255,255,255,.18);border-color:rgba(255,255,255,.25);color:#fff">Ctrl ⏎</kbd></button>
+                <div class="log" id="buildLog"><span class="dim">— last build —</span>
+[ok] Fetched 7 sources (6 cached, 1 downloaded)
+[ok] Smart merge: lang/en_us.json — union, 214 keys, 3 packs
+[ok] Smart merge: tags mineable/pickaxe — union, 41 values
+<span class="warn">[warn] Conflict: grass_block_top.png — Stay True wins (lower in list)</span>
+[ok] RPO: applied 8 setting values from 3 configs
+[ok] Wrote output to Downloads folder: packmerge.zip (48.2 MB) in 3.8s</div>
+              </div>
+
+              <div class="card" id="notificationsCard">
+                <h2>Notifications <span class="right"><button class="btn small ghost" id="viewActivityBtn">View Activity</button></span></h2>
+                <p class="hint">Downloaded updates waiting to be applied. Select an item to review and act on it in Activity.</p>
+                <div id="notificationList"></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ======== CONFLICTS ======== -->
+        <section class="view" id="view-conflicts">
+          <div class="topbar"><div><h1>Conflicts</h1><div class="sub">Every contested file from the current merge, grouped by how it was handled. Saved merge rules apply the selected winner automatically in future builds.</div></div>
+          <div class="right"><button class="btn accent" id="jumpOpenBtn">Review next open conflict</button></div></div>
+
+          <div class="conflict-stats">
+            <div class="stat warn"><div class="n" id="statOpen">3</div><div class="t">need a decision</div></div>
+            <div class="stat ok"><div class="n">2</div><div class="t">smart-merged automatically</div></div>
+            <div class="stat"><div class="n">1</div><div class="t">settled by list priority</div></div>
+            <div class="stat"><div class="n">6</div><div class="t">override the vanilla <span style="font-family:ui-monospace,Menlo,monospace">minecraft</span> namespace</div></div>
+          </div>
+
+          <div class="card" id="queueCard">
+            <h2>Decision queue</h2>
+            <div class="conflict-toolbar">
+              <input type="text" id="conflictSearch" placeholder="Search by file path or source…" aria-label="Search conflicts">
+              <button class="chip active" data-filter="all">All</button>
+              <button class="chip" data-filter="open">Needs decision</button>
+              <button class="chip" data-filter="texture">Textures</button>
+              <button class="chip" data-filter="json">JSON</button>
+              <button class="chip" data-filter="vanilla">Vanilla namespace</button>
+            </div>
+            <div class="bulkbar">
+              <span class="bt">Bulk actions</span>
+              <span class="bs">Priority follows the source list — the source lower in the list wins.</span>
+              <button class="btn small" id="bulkPriorityBtn">Apply list priority to all open</button>
+              <button class="btn small ghost" id="bulkRuleBtn">Save winners as rules</button>
+            </div>
+            <div id="conflictQueue">
+              <div class="queue-group" data-group>
+                <div class="qh"><span>Needs a decision</span><span class="qc" data-group-count></span><span class="line"></span></div>
+                <div class="crow selected" data-row data-id="grass" data-kind="texture" data-status="open" data-namespace="minecraft" data-search="grass_block_top faithful stay true texture block">
+                  <span class="pill kind">TEXTURE</span><span class="pill vanilla">VANILLA NS</span>
+                  <span class="cp"><span class="path">assets/minecraft/textures/block/grass_block_top.png</span><div class="parties">Faithful 32× vs Stay True · binary files differ</div></span>
+                  <span class="pill open" data-status-pill>OPEN</span>
+                  <span class="acts"><button class="btn small" data-review="grass">Review</button><button class="btn small ghost" data-apply="grass">Apply priority</button></span>
+                </div>
+                <div class="crow" data-row data-id="lang" data-kind="json" data-status="open" data-namespace="minecraft" data-search="lang en_us json translation default dark mode stay true">
+                  <span class="pill kind">JSON</span><span class="pill vanilla">VANILLA NS</span>
+                  <span class="cp"><span class="path">assets/minecraft/lang/en_us.json</span><div class="parties">Default Dark Mode vs Stay True · 214 keys unioned, 3 keys differ</div></span>
+                  <span class="pill open" data-status-pill>OPEN</span>
+                  <span class="acts"><button class="btn small" data-review="lang">View diff</button><button class="btn small ghost" data-apply="lang">Apply priority</button></span>
+                </div>
+                <div class="crow" data-row data-id="model" data-kind="json" data-status="open" data-namespace="minecraft" data-search="models item iron_pickaxe json faithful fresh animations">
+                  <span class="pill kind">JSON</span><span class="pill vanilla">VANILLA NS</span>
+                  <span class="cp"><span class="path">assets/minecraft/models/item/iron_pickaxe.json</span><div class="parties">Faithful 32× vs Fresh Animations · parent model and texture references differ</div></span>
+                  <span class="pill open" data-status-pill>OPEN</span>
+                  <span class="acts"><button class="btn small" data-review="model">View diff</button><button class="btn small ghost" data-apply="model">Apply priority</button></span>
+                </div>
+              </div>
+              <div class="queue-group" data-group>
+                <div class="qh"><span>Smart-merged — no decision needed</span><span class="qc" data-group-count></span><span class="line"></span></div>
+                <div class="crow" data-row data-id="pickaxe-tag" data-kind="json" data-status="smart" data-namespace="minecraft" data-search="tags block mineable pickaxe json union terralith vanilla tweaks">
+                  <span class="pill kind">JSON · TAG</span><span class="pill vanilla">VANILLA NS</span>
+                  <span class="cp"><span class="path">data/minecraft/tags/block/mineable/pickaxe.json</span><div class="parties">Terralith + Vanilla Tweaks · values unioned, 41 total</div></span>
+                  <span class="pill smart" data-status-pill>UNIONED</span>
+                </div>
+                <div class="crow" data-row data-id="sounds" data-kind="json" data-status="smart" data-namespace="minecraft" data-search="sounds json union stay true fresh animations">
+                  <span class="pill kind">JSON</span><span class="pill vanilla">VANILLA NS</span>
+                  <span class="cp"><span class="path">assets/minecraft/sounds.json</span><div class="parties">Stay True + Fresh Animations · 18 sound events combined, no overlapping keys</div></span>
+                  <span class="pill smart" data-status-pill>COMBINED</span>
+                </div>
+              </div>
+              <div class="queue-group" data-group id="settledGroup">
+                <div class="qh"><span>Settled by priority or rule</span><span class="qc" data-group-count></span><span class="line"></span></div>
+                <div class="crow" data-row data-id="recipe" data-kind="json" data-status="resolved" data-namespace="minecraft" data-search="recipes iron_pickaxe json terralith priority">
+                  <span class="pill kind">JSON</span><span class="pill vanilla">VANILLA NS</span>
+                  <span class="cp"><span class="path">data/minecraft/recipes/iron_pickaxe.json</span><div class="parties">Terralith wins by list priority · Vanilla Tweaks version not used</div></span>
+                  <span class="pill done" data-status-pill>PRIORITY</span>
+                </div>
+              </div>
+              <p class="hint" id="queueEmpty" style="display:none; margin:10px 0 2px">No conflicts match the current search or filter.</p>
+            </div>
+          </div>
+
+          <div class="card" id="textureDetailCard">
+            <h2>Texture comparison <span class="right"><span class="pill open" id="textureStatusPill">Needs decision</span></span></h2>
+            <p class="hint">Select a version to set the winner for this file. Saving the choice as a merge rule applies it to matching files in future builds.</p>
+            <div class="conflict-path" id="texturePath">assets/minecraft/textures/block/grass_block_top.png</div>
+            <div class="versus">
+              <button class="side-pick" data-side="a">
+                <span class="tex"><canvas class="pix" id="texCanvasA" data-seed="faithful-grass" width="16" height="16"></canvas></span>
+                <span class="pn" id="texNameA">Faithful 32×</span>
+                <div class="pd" id="texDetailA">32×32 · crisper, brighter greens · sits above Stay True, so it loses ties</div>
+                <span class="win-tag">Winner — click to keep</span>
+              </button>
+              <span class="vs">vs</span>
+              <button class="side-pick winner" data-side="b">
+                <span class="tex"><canvas class="pix" id="texCanvasB" data-seed="staytrue-grass" width="16" height="16"></canvas></span>
+                <span class="pn" id="texNameB">Stay True</span>
+                <div class="pd" id="texDetailB">16×16 · softer, vanilla-faithful tones · lower in the list, so it wins</div>
+                <span class="win-tag">Winner — click to keep</span>
+              </button>
+            </div>
+            <div class="conflict-nav">
+              <button class="btn small" id="conflictPrev">← Prev</button>
+              <span class="pos" id="conflictPos">Needs decision · 1 of 3 open</span>
+              <button class="btn small" id="conflictSkip">Skip for now</button>
+              <button class="btn small accent" id="conflictAccept" style="margin-left:auto">Accept &amp; save rule</button>
+            </div>
+          </div>
+
+          <div class="card" id="diffCard">
+            <h2>JSON difference</h2>
+            <div class="diff-head"><span class="dp" id="diffPath">assets/minecraft/lang/en_us.json</span><span class="pill open" id="diffStatusPill">3 values differ</span></div>
+            <p class="hint" id="diffNote">Keys present in only one source were merged automatically. Only the values below disagree — select the value to keep for each key.</p>
+            <div class="diff-table" id="diffTable"></div>
+          </div>
+
+          <div class="card">
+            <h2>Saved merge rules</h2>
+            <p class="hint" id="rulesEmpty">No merge rules saved. A merge rule stores a conflict decision for automatic reuse in future builds.</p>
+            <div id="rulesList"></div>
+          </div>
+        </section>
+
+        <!-- ======== RPO ======== -->
+        <section class="view" id="view-rpo">
+          <div class="topbar"><div><h1>RPO Toggles</h1><div class="sub">Respackopts settings detected in the current sources. Values set here are written into the merged output at build time.</div></div>
+          <div class="right"><button class="btn ghost" id="rpoResetBtn">Reset to pack defaults</button></div></div>
+
+          <div class="conflict-stats">
+            <div class="stat"><div class="n" id="statRpoTotal">8</div><div class="t">settings across <span id="statRpoConfigs">3</span> configs</div></div>
+            <div class="stat ok"><div class="n" id="statRpoOn">4 of 6</div><div class="t">switches currently on</div></div>
+            <div class="stat"><div class="n" id="statRpoFiles">1,012</div><div class="t">files gated by a condition</div></div>
+            <div class="stat warn"><div class="n" id="statRpoPending">0</div><div class="t">changes waiting for a merge</div></div>
+          </div>
+
+          <div class="rpo-pending" id="rpoPending" style="display:none">
+            <span class="pt"><b id="rpoPendingText">0 changes</b> since the last merge. These setting changes are in the merge queue — the merged output still uses the previous values until the next merge.</span>
+            <button class="btn small accent" id="rpoRebuildBtn">Merge to apply</button>
+          </div>
+
+          <div class="card">
+            <h2>Settings <span class="right"><span style="color:var(--faint); font-weight:600; font-size:12px">Grouped by source pack</span></span></h2>
+            <div class="conflict-toolbar" style="margin-bottom:4px">
+              <input type="text" id="rpoSearch" placeholder="Search settings by name, key, or pack…" aria-label="Search RPO settings">
+              <button class="chip active" data-rpo-filter="all">All</button>
+              <button class="chip" data-rpo-filter="on">On</button>
+              <button class="chip" data-rpo-filter="off">Off</button>
+            </div>
+            <div id="rpoFull"></div>
+            <p class="hint" id="rpoEmpty" style="display:none; margin:10px 0 2px">No settings match the current search or filter.</p>
+          </div>
+
+          <div class="card">
+            <h2>Namespaces</h2>
+            <p class="hint">Each config is assigned a namespace so entries from different packs cannot collide. Conditions in gated files reference entries as <span class="mono-inline">namespace:entry</span>. Renaming a namespace rewrites every condition that uses it.</p>
+            <div id="nsList"></div>
+          </div>
+
+        </section>
+
+        <!-- ======== DISCOVER ======== -->
+        <section class="view" id="view-discover">
+          <div class="topbar"><div><h1>Discover</h1><div class="sub">Search Modrinth for resource packs and data packs. Subscribing downloads a pack, adds it to Sources, and enables automatic update checks.</div></div></div>
+          <div class="searchbar">
+            <input type="text" id="discSearch" placeholder="Search Modrinth packs…  try “dark” or “anim”" aria-label="Search Modrinth packs">
+            <button class="btn ghost" id="collectionBtn">Import collection URL…</button>
+          </div>
+          <div class="disc-toolbar" role="group" aria-label="Discover filters and sorting">
+            <label class="filter-field"><span>Category</span>
+              <select id="discCategory" class="rpo-select">
+                <option value="all">All categories</option>
+                <option value="GUI">GUI</option>
+                <option value="Animation">Animation</option>
+                <option value="World generation">World generation</option>
+                <option value="Structures">Structures</option>
+                <option value="Font &amp; style">Font &amp; style</option>
+              </select>
+            </label>
+            <label class="filter-field"><span>Pack type</span>
+              <select id="discPackType" class="rpo-select">
+                <option value="all">All pack types</option>
+                <option value="RP">Resource packs</option>
+                <option value="DP">Data packs</option>
+              </select>
+            </label>
+            <label class="filter-field"><span>Game version</span>
+              <select id="discVersion" class="rpo-select">
+                <option value="all">All versions</option>
+                <option value="1.21.4">1.21.4</option>
+                <option value="1.21">1.21</option>
+                <option value="1.20.4">1.20.4</option>
+              </select>
+            </label>
+            <label class="filter-field"><span>Sort by</span>
+              <select id="discSort" class="rpo-select">
+                <option value="relevance">Relevance</option>
+                <option value="downloads">Downloads</option>
+                <option value="follows">Follows</option>
+                <option value="newest">Newest</option>
+                <option value="updated">Recently updated</option>
+              </select>
+            </label>
+            <span class="disc-count" id="discCount"></span>
+          </div>
+          <div class="disc-grid" id="discGrid"></div>
+        </section>
+
+        <!-- ======== ACTIVITY ======== -->
+        <section class="view" id="view-activity">
+          <div class="topbar"><div><h1>Activity</h1><div class="sub">Incoming updates only. Whether an update merges right away or waits for a click follows the Auto Rebuild switch — the one below mirrors the Workbench switch, and both stay in sync.</div></div>
+          <div class="right"><button class="btn ghost" id="activityCheckBtn">Check for updates</button></div></div>
+
+          <div class="conflict-stats">
+            <div class="stat warn"><div class="n" id="statActivityUpdates">2</div><div class="t" id="statActivityUpdatesLabel">updates downloaded, waiting to apply</div></div>
+            <div class="stat ok"><div class="n">48.2 MB</div><div class="t">latest output · Downloads folder<button class="minibtn" data-browse-output title="Open the Downloads folder to browse the output"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>Browse</button></div></div>
+            <div class="stat switchstat">
+              <label class="watchwrap" id="activityWatchWrap" title="Auto Rebuild: when on, local file changes merge automatically and updates downloaded in Activity merge automatically. When off, updates wait for your click before anything merges.">
+                <span class="switch"><input type="checkbox" id="activityWatchToggle"><span class="track"></span></span>
+                <span class="watchmeta"><span class="watchlabel">Watch for changes</span><span class="watchhint">Auto Rebuild — changes &amp; updates</span></span>
+              </label>
+            </div>
+          </div>
+
+          <div class="card">
+            <h2>Timeline</h2>
+            <div class="conflict-toolbar">
+              <button class="chip active" data-activity-filter="all">All</button>
+              <button class="chip" data-activity-filter="update">Updates</button>
+              <button class="btn small accent" id="updateAllBtn" style="margin-left:auto" title="Handle every waiting update at once — with Auto Rebuild off they join the merge queue and nothing merges; with it on, all apply and one merge runs">Update all</button>
+            </div>
+            <div id="activityFeed"></div>
+            <p class="hint" id="activityEmpty" style="display:none; margin:10px 0 2px">No events match the current filter.</p>
+          </div>
+        </section>
+
+      </main>
+    </div>
+
+    <!-- changelog modal -->
+    <div class="scrim" id="changelogScrim" role="dialog" aria-modal="true" aria-labelledby="clTitle">
+      <div class="dialog">
+        <h3 id="clTitle">Faithful 32× — what's new</h3>
+        <p class="sub">Changelog provided by Modrinth for this version. The update has been downloaded — applying it adds it to the merge queue for your next build, or merges right away while Auto Rebuild is on.</p>
+        <ul class="cl" id="clBody"></ul>
+        <div class="foot">
+          <button class="btn ghost" data-close>Not now</button>
+          <button class="btn accent" id="clAccept">Merge with new version</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- add URL modal: paste a link, the pack joins Sources -->
+    <div class="scrim" id="addUrlScrim" role="dialog" aria-modal="true" aria-labelledby="addUrlTitle">
+      <div class="dialog">
+        <h3 id="addUrlTitle">Add source from URL</h3>
+        <p class="sub">Paste a Modrinth project link or a direct link to a .zip pack file. The pack downloads and is added at the end of its group in the source list, where it wins file conflicts — drag it to change its priority.</p>
+        <form id="addUrlForm" novalidate>
+          <input type="text" class="url-input" id="addUrlInput" placeholder="https://modrinth.com/resourcepack/…" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Pack link">
+          <div class="url-err" id="addUrlErr" style="display:none" role="alert"></div>
+          <div class="foot">
+            <button type="button" class="btn ghost" id="addUrlCancel">Cancel</button>
+            <button type="submit" class="btn accent" id="addUrlSubmit">Add source</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- real file picker for "+ Add local file…" — in the app this button
+         opens the system picker directly, with no dialog or toast first -->
+    <input type="file" id="localFileInput" accept=".zip" multiple hidden aria-hidden="true" tabindex="-1">
+
+    <!-- inspector drawer: per-source detail, opened from a source row -->
+    <div class="drawer-wrap" id="inspectorWrap" aria-hidden="true">
+      <div class="drawer-scrim" id="inspectorScrim"></div>
+      <aside class="drawer" role="dialog" aria-modal="true" aria-labelledby="inspTitle">
+        <div class="drawer-head">
+          <span class="thumb"><canvas class="pix" id="inspThumb" data-seed="grass" width="16" height="16"></canvas></span>
+          <div class="m"><h3 id="inspTitle">Source</h3><div class="d" id="inspSub"></div></div>
+          <button class="iconbtn" id="inspClose" aria-label="Close inspector"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+        </div>
+        <div id="inspMeta"></div>
+        <h4 class="drawer-h">Contents</h4>
+        <div id="inspFiles"></div>
+        <h4 class="drawer-h">Merge notes</h4>
+        <p class="hint" id="inspNotes" style="margin:0"></p>
+      </aside>
+    </div>
+
+    <!-- guided tour -->
+    <div class="tour-scrim" id="tourScrim" aria-hidden="true">
+      <div class="tour-highlight" id="tourHighlight"></div>
+      <div class="tour-card" id="tourCard" role="dialog" aria-modal="true" aria-labelledby="tourTitle">
+        <div class="tour-step" id="tourStepLabel">Step 1 of 8</div>
+        <h3 id="tourTitle">Welcome</h3>
+        <p id="tourBody"></p>
+        <div class="tour-dots" id="tourDots" aria-hidden="true"></div>
+        <div class="tour-actions">
+          <button class="btn ghost small" id="tourSkip" type="button">Skip tour</button>
+          <span class="spacer"></span>
+          <button class="btn small" id="tourBack" type="button">Back</button>
+          <button class="btn accent small" id="tourNext" type="button">Next</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="toasts" aria-live="polite"></div>
+
+    <script>
+      "use strict";
+      /* ================= sample state ================= */
+      var RP = "Resource pack", DP = "Data pack";
+      var sources = [
+        {id:"ddm", name:"Default Dark Mode", type:"RP", kind:"Local folder", files:"1,842 files", ver:"for MC 1.21+", rpo:2, on:true, seed:"ddm", note:"by nebulr · Light/dark UI variants"},
+        {id:"faithful", name:"Faithful 32×", type:"RP", kind:"Modrinth", files:"3,204 files", ver:"1.21.4", sub:true, update:true, on:true, seed:"faithful", note:"Subscribed · pinned to the 1.21.4 line"},
+        {id:"staytrue", name:"Stay True", type:"RP", kind:"Modrinth", files:"2,977 files", ver:"1.21.4", sub:true, rpo:2, on:true, seed:"staytrue", note:"Subscribed · auto-check on"},
+        {id:"freshan", name:"Fresh Animations", type:"RP", kind:"Modrinth", files:"412 files", ver:"1.21.4", sub:true, rpo:4, on:true, seed:"freshan", note:"Subscribed · entity + item animation"},
+        {id:"barebones", name:"Bare Bones", type:"RP", kind:"Local zip", files:"1,508 files", ver:"1.21.x", on:false, seed:"barebones", note:"Disabled"},
+        {id:"terralith", name:"Terralith", type:"DP", kind:"Modrinth", files:"1,150 files", ver:"2.5.8", sub:true, update:true, on:true, seed:"terralith", note:"Namespace: terralith · worldgen overhaul"},
+        {id:"incendium", name:"Incendium", type:"DP", kind:"Modrinth", files:"640 files", ver:"5.3.5", sub:true, on:true, seed:"incendium", note:"Namespace: incendium · Nether overhaul"},
+        {id:"vtweaks", name:"Vanilla Tweaks — Crafting", type:"DP", kind:"Local zip", files:"96 files", ver:"1.21", on:true, seed:"vtweaks", note:"Writes into the minecraft namespace"}
+      ];
+      var updates = [
+        {id:"faithful", name:"Faithful 32×", from:"1.21.4 (Jan build)", to:"new 1.21.4 build", ver:"1.21.4", seed:"faithful",
+         cl:["Retextured all copper variants for the new oxidation stages","Fixed z-fighting on grass block sides at 32×","Updated pack.mcmeta for the latest 1.21.4 hotfix","12 textures touched, 3 added, 0 removed"]},
+        {id:"terralith", name:"Terralith", from:"2.5.8", to:"2.5.11", ver:"2.5.11", seed:"terralith",
+         cl:["Two new biomes: Sakura Grove and Basalt Cliffs","Structure loot tables rebalanced","Fix: rare crash when generating near mushroom fields","No change to the required Minecraft version"]}
+      ];
+      /* Merge queue: updates the user has applied while Auto Rebuild is off.
+         They sit here — no merge runs — until the next build (manual or
+         automatic) folds them in and bumps each source to its new version. */
+      var queued = [];
+      var toggles = [
+        {group:"Default Dark Mode", ns:"darkmode", items:[
+          {key:"darkMode", label:"Dark mode UI", desc:"Swaps the vanilla GUI to the dark texture set.", files:272, on:true, samples:["assets/minecraft/textures/gui/container/inventory.png","assets/minecraft/textures/gui/widgets.png","assets/minecraft/textures/gui/title/background/panorama_0.png"]},
+          {key:"uiAccent", label:"UI accent color", desc:"Accent color for highlighted buttons and selection boxes.", type:"enum", options:["Steel","Blue","Green","Amber"], value:"Steel", files:34, samples:["assets/minecraft/textures/gui/widgets.png","assets/minecraft/textures/gui/container/creative_inventory/tab_items.png"]}]},
+        {group:"Stay True", ns:"stay_true", items:[
+          {key:"connectedTextures", label:"Connected textures", desc:"Glass and bookshelf edges join up seamlessly.", files:64, on:true, samples:["assets/minecraft/textures/block/glass.png","assets/minecraft/textures/block/bookshelf.png"]},
+          {key:"betterLeaves", label:"Bushy leaves", desc:"Fuller leaf blocks. Costs a little FPS.", files:18, on:false, samples:["assets/minecraft/textures/block/oak_leaves.png","assets/minecraft/textures/block/birch_leaves.png"]}]},
+        {group:"Fresh Animations", ns:"fresh_an", items:[
+          {key:"entityAnimations", label:"Entity animations", desc:"Animated eyes, breathing, and movement for mobs.", files:210, on:true, samples:["assets/minecraft/optifine/cem/zombie.jem","assets/minecraft/optifine/cem/creeper.jem"]},
+          {key:"itemAnimations", label:"Item animations", desc:"Held items bob and sway.", files:96, on:true, samples:["assets/minecraft/models/item/iron_pickaxe.json","assets/minecraft/models/item/bow.json"]},
+          {key:"animSpeed", label:"Animation speed", desc:"Playback speed multiplier for entity and item animations.", type:"number", min:0.5, max:2, step:0.25, value:1, unit:"×", files:306, samples:["assets/minecraft/optifine/cem/zombie.jem","assets/minecraft/optifine/cem/skeleton.jem"]},
+          {key:"experimentalTrails", label:"Experimental trails", desc:"Particle trails on projectiles. Author marked unstable.", files:12, on:false, samples:["assets/minecraft/particles/trail.png","assets/minecraft/optifine/cem/arrow.jem"]}]}
+      ];
+      /* Discover only ever queries Modrinth's resourcepack and datapack
+         project types — shader packs are excluded at the query level
+         because their files can't be merged like resource/data packs. */
+      var discover = [
+        {name:"Dark GUI", author:"nebulr", type:"RP", seed:"darkgui", dl:"2.1M downloads", dlNum:2100000, follows:"38K", cat:"GUI", versions:["1.21.4","1.21","1.20.4"], updatedDays:9, createdDays:640, desc:"A darker, flatter take on the vanilla GUI. Pairs well with a dark-mode toggle pack.", sub:false},
+        {name:"Animated Items+", author:"packworks", type:"RP", seed:"animplus", dl:"640K downloads", dlNum:640000, follows:"9.4K", cat:"Animation", versions:["1.21.4"], updatedDays:1, createdDays:95, desc:"Every tool and weapon gets a subtle idle animation via Respackopts conditions.", sub:false},
+        {name:"Structory", author:"Vooglam", type:"DP", seed:"structory", dl:"3.4M downloads", dlNum:3400000, follows:"61K", cat:"Structures", versions:["1.21.4","1.21"], updatedDays:21, createdDays:820, desc:"Small atmospheric structures scattered through the world. Pure data pack — tags union cleanly.", sub:false},
+        {name:"Cozy Tweaks", author:"mintleaf", type:"RP", seed:"cozy", dl:"210K downloads", dlNum:210000, follows:"3.1K", cat:"Font & style", versions:["1.20.4"], updatedDays:44, createdDays:210, desc:"Warped wood palette, softer fonts, and rounded containers.", sub:false},
+        {name:"Nullscape", author:"Starmute", type:"DP", seed:"nullscape", dl:"5.9M downloads", dlNum:5900000, follows:"88K", cat:"World generation", versions:["1.21.4","1.21"], updatedDays:5, createdDays:1100, desc:"End dimension overhaul, ~100× larger islands. Namespace: nullscape.", sub:false}
+      ];
+
+      /* ================= pixel-texture painter ================= */
+      function hashStr(s){var h=2166136261;for(var i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619)}return h>>>0}
+      function rng(seed){var a=hashStr(seed);return function(){a|=0;a=a+0x6D2B79F5|0;var t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+      var palettes={
+        grass:["#4a7c2f","#5d9640","#6cab4a","#3e6b27","#79b657"],
+        "faithful-grass":["#5da33f","#6fb84e","#7fc95f","#4c8f34","#8dd470"],
+        "staytrue-grass":["#557f36","#648c40","#759a4c","#476c2c","#86a95c"],
+        ddm:["#232327","#2d2d31","#1a1a1d","#3a3a40","#26262b"],
+        faithful:["#7a4f2c","#96683d","#5d9640","#c9a227","#8a5a33"],
+        staytrue:["#6b8f4e","#7fa35c","#557f36","#94b46e","#46652c"],
+        freshan:["#b5533c","#cc6a4a","#96422e","#e08060","#a34a34"],
+        barebones:["#d8cf9f","#e8e0b5","#c4b983","#f2ecd0","#b3a672"],
+        terralith:["#8a6fb8","#9d84cc","#745aa3","#b09ad8","#654e8f"],
+        incendium:["#c23b22","#d94f2e","#a32e18","#e86a44","#8f2413"],
+        vtweaks:["#b08954","#c39e66","#96733f","#d4b47c","#7d5f31"],
+        darkgui:["#26262b","#313138","#1c1c20","#3d3d46","#28282e"],
+        animplus:["#3f8fb5","#54a5cc","#2f7599","#6db8dd","#256482"],
+        structory:["#7d7268","#8f8478","#6b6055","#a2988a","#5a5049"],
+        cozy:["#d9a7b0","#e6bcc2","#c78f9a","#f0d3d7","#b57f8c"],
+        nullscape:["#4b3a63","#5d4a7a","#3a2d4f","#6f5a8f","#2e2340"]
+      };
+      function paint(canvas){
+        var seed=canvas.getAttribute("data-seed");
+        var pal=palettes[seed]||palettes.grass;
+        var ctx=canvas.getContext("2d"); if(!ctx) return;
+        var w=canvas.width,h=canvas.height,r=rng(seed);
+        for(var y=0;y<h;y++)for(var x=0;x<w;x++){
+          ctx.fillStyle=pal[Math.floor(r()*pal.length)];
+          ctx.fillRect(x,y,1,1);
+        }
+        /* a few darker speckles for texture */
+        ctx.fillStyle="rgba(0,0,0,.16)";
+        for(var i=0;i<w*h/7;i++){ctx.fillRect(Math.floor(r()*w),Math.floor(r()*h),1,1)}
+      }
+      function paintAll(scope){(scope||document).querySelectorAll("canvas.pix").forEach(paint)}
+
+      /* ================= helpers ================= */
+      function el(id){return document.getElementById(id)}
+      function toast(msg){
+        var t=document.createElement("div"); t.className="toast"; t.textContent=msg;
+        el("toasts").appendChild(t);
+        setTimeout(function(){t.style.opacity="0"; t.style.transition="opacity .3s"; setTimeout(function(){t.remove()},320)},3400);
+      }
+      function showView(name){
+        document.querySelectorAll(".view").forEach(function(v){v.classList.toggle("on",v.id==="view-"+name)});
+        document.querySelectorAll(".navitem").forEach(function(n){n.classList.toggle("active",n.getAttribute("data-view")===name)});
+        window.scrollTo(0,0);
+      }
+
+      /* ================= sources ================= */
+      function srcRow(s,idx){
+        var row=document.createElement("div"); row.className="src"+(s.on?"":" off");
+        row.setAttribute("data-sid",s.id);
+        var badges='<span class="badge '+(s.type==="RP"?"rp":"dp")+'">'+(s.type==="RP"?"RESOURCE":"DATA")+'</span>';
+        if(s.rpo) badges+=' <span class="badge rpo">RPO · '+s.rpo+' toggles</span>';
+        if(s.sub) badges+=' <span class="badge sub">SUBSCRIBED</span>';
+        if(s.update) badges+=' <span class="upd">New version in · not applied</span>';
+        if(s.queued) badges+=' <span class="upd">Update queued · applies on next build</span>';
+        row.innerHTML=
+          '<span class="grip" title="Drag to reorder priority"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.8"/><circle cx="15" cy="6" r="1.8"/><circle cx="9" cy="12" r="1.8"/><circle cx="15" cy="12" r="1.8"/><circle cx="9" cy="18" r="1.8"/><circle cx="15" cy="18" r="1.8"/></svg></span>'
+          +'<span class="thumb"><canvas class="pix" data-seed="'+s.seed+'" width="16" height="16"></canvas></span>'
+          +'<div class="meta"><div class="nm">'+s.name+' '+badges+'</div>'
+          +'<div class="det">'+s.kind+' · '+s.files+' · '+s.ver+' — '+s.note+'</div></div>'
+          +((s.update||s.queued)?'<span class="updot" title="'+(s.queued?"Update queued — applies on the next build":"New version downloaded — not applied yet")+'"></span>':'')
+          +'<button class="iconbtn" data-inspect="'+s.id+'" title="Inspect source — file tree, counts, and merge notes" aria-label="Inspect '+s.name+'"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg></button>'
+          +'<span class="prio">ORDER<b>'+(idx+1)+'</b></span>'
+          +'<label class="switch" title="Include in merge"><input type="checkbox" data-src="'+s.id+'" '+(s.on?"checked":"")+'><span class="track"></span></label>';
+        return row;
+      }
+      var dragSrcId=null;
+      function renderSources(){
+        var inc=el("srcIncludedVal");
+        if(inc){
+          var onN=sources.filter(function(s){return s.on}).length;
+          inc.textContent=onN+" of "+sources.length+(sources.length-onN ? " · "+(sources.length-onN)+" disabled" : "");
+        }
+        var wrap=el("sourceList"); wrap.innerHTML="";
+        [["RP","Resource packs"],["DP","Data packs"]].forEach(function(g){
+          var list=sources.filter(function(s){return s.type===g[0]});
+          var head=document.createElement("div"); head.className="grouphead";
+          head.innerHTML='<span>'+g[1]+'</span><span class="gcount">'+list.filter(function(s){return s.on}).length+' of '+list.length+' in the merge</span><span class="line"></span>';
+          wrap.appendChild(head);
+          list.forEach(function(s){wrap.appendChild(srcRow(s,sources.indexOf(s)))});
+        });
+        paintAll(wrap);
+        wrap.querySelectorAll("input[data-src]").forEach(function(cb){
+          cb.addEventListener("change",function(){
+            var s=sources.filter(function(x){return x.id===cb.getAttribute("data-src")})[0];
+            s.on=cb.checked; renderSources();
+            toast(s.name+(s.on?" added back to the merge.":" removed from the merge — file stays cached."));
+          });
+        });
+        wrap.querySelectorAll("[data-inspect]").forEach(function(b){
+          b.addEventListener("click",function(){ openInspector(b.getAttribute("data-inspect")); });
+        });
+        /* Drag reorder, as the hint and grip promise. Dragging is armed
+           from the grip so row text stays selectable; drops are accepted
+           only within the same pack type, matching the grouped list. */
+        wrap.querySelectorAll(".src").forEach(function(rowEl){
+          var grip=rowEl.querySelector(".grip");
+          if(grip){
+            grip.addEventListener("mousedown",function(){ rowEl.draggable=true; });
+            grip.addEventListener("mouseup",function(){ rowEl.draggable=false; });
+          }
+          rowEl.addEventListener("dragstart",function(e){
+            dragSrcId=rowEl.getAttribute("data-sid");
+            if(e.dataTransfer){ e.dataTransfer.effectAllowed="move"; try{ e.dataTransfer.setData("text/plain",dragSrcId); }catch(err){} }
+            rowEl.classList.add("dragging");
+          });
+          rowEl.addEventListener("dragend",function(){ rowEl.classList.remove("dragging"); rowEl.draggable=false; dragSrcId=null; });
+          rowEl.addEventListener("dragover",function(e){
+            if(!dragSrcId) return;
+            var drag=sources.filter(function(x){return x.id===dragSrcId})[0];
+            var target=sources.filter(function(x){return x.id===rowEl.getAttribute("data-sid")})[0];
+            if(!drag||!target||drag===target||drag.type!==target.type) return;
+            e.preventDefault(); if(e.dataTransfer) e.dataTransfer.dropEffect="move";
+          });
+          rowEl.addEventListener("drop",function(e){
+            if(!dragSrcId) return;
+            e.preventDefault();
+            var targetId=rowEl.getAttribute("data-sid");
+            var from=sources.findIndex(function(x){return x.id===dragSrcId});
+            var to=sources.findIndex(function(x){return x.id===targetId});
+            if(from<0||to<0||from===to){ dragSrcId=null; return; }
+            var rect=rowEl.getBoundingClientRect();
+            var after=(e.clientY-rect.top)>rect.height/2;
+            var item=sources.splice(from,1)[0];
+            var insertAt=sources.findIndex(function(x){return x.id===targetId})+(after?1:0);
+            sources.splice(insertAt,0,item);
+            dragSrcId=null;
+            renderSources();
+            toast(item.name+" moved to position "+(sources.indexOf(item)+1)+" of "+sources.length+" — priority follows the list order.");
+          });
+        });
+      }
+
+      /* ================= inspector drawer ================= */
+      var inspFilesByType={
+        RP:["pack.mcmeta","assets/minecraft/textures/block/","assets/minecraft/textures/gui/","assets/minecraft/lang/en_us.json","assets/minecraft/models/item/"],
+        DP:["pack.mcmeta","data/minecraft/tags/block/","data/minecraft/recipes/","data/minecraft/worldgen/","data/minecraft/loot_tables/"]
+      };
+      function openInspector(id){
+        var s=sources.filter(function(x){return x.id===id})[0]; if(!s) return;
+        el("inspTitle").textContent=s.name;
+        el("inspSub").textContent=(s.type==="RP"?"Resource pack":"Data pack")+" · "+s.kind;
+        var thumb=el("inspThumb"); thumb.setAttribute("data-seed",s.seed);
+        el("inspMeta").innerHTML=
+          '<div class="outrow"><span class="k">Status</span><span class="v">'+(s.on?"Included in merge":"Excluded from merge")+'</span></div>'
+          +'<div class="outrow"><span class="k">Files</span><span class="v">'+s.files+'</span></div>'
+          +'<div class="outrow"><span class="k">Version</span><span class="v">'+s.ver+'</span></div>'
+          +(s.sub?'<div class="outrow"><span class="k">Subscription</span><span class="v">Subscribed · update checks on</span></div>':'')
+          +(s.rpo?'<div class="outrow"><span class="k">Respackopts</span><span class="v">'+s.rpo+' settings detected</span></div>':'')
+          +(s.update?'<div class="outrow"><span class="k">Update</span><span class="v">New version downloaded · not applied yet</span></div>':s.queued?'<div class="outrow"><span class="k">Update</span><span class="v">In the merge queue · applies on the next build</span></div>':'');
+        el("inspFiles").innerHTML=inspFilesByType[s.type].map(function(f){
+          return '<div class="insp-file">'+f+(f.indexOf("minecraft")>=0?'<span class="tag pill vanilla">VANILLA NS</span>':"")+'</div>';
+        }).join("")+'<p class="hint" style="margin:6px 0 0">Full tree: '+s.files+' across '+(s.type==="RP"?"assets/":"data/")+' namespaces.</p>';
+        el("inspNotes").textContent=s.note+". Priority follows the source list — inspect another source from its row on the Workbench to compare contents before resolving a conflict.";
+        var wrap=el("inspectorWrap"); wrap.classList.add("on"); wrap.setAttribute("aria-hidden","false");
+        paint(thumb);
+      }
+      function closeInspector(){
+        var wrap=el("inspectorWrap"); wrap.classList.remove("on"); wrap.setAttribute("aria-hidden","true");
+      }
+      el("inspClose").addEventListener("click",closeInspector);
+      el("inspectorScrim").addEventListener("click",closeInspector);
+
+      /* ================= notifications card + activity feed ================= */
+      /* Each build overwrites the output file in the Downloads folder.
+         Only the current build status is shown on the Workbench; there is
+         no build history, restore, or staged-configuration flow. */
+      function syncUpdateBadges(){
+        var n=updates.length;
+        var nav=el("navActivityCount"); if(nav){ nav.textContent=String(n); nav.style.display=n?"":"none"; }
+        var st=el("statActivityUpdates"); if(st) st.textContent=String(updates.length+queued.length);
+        syncQueueUI();
+      }
+      function syncQueueUI(){
+        /* One merge queue: queued pack updates and pending RPO setting
+           changes are the same thing — staged changes that apply on the
+           next merge — so the Build card counts them together. */
+        var row=el("queuedRow"); if(!row) return;
+        var pending=(typeof rpoPendingCount==="function") ? rpoPendingCount() : 0;
+        var parts=[];
+        if(queued.length) parts.push(queued.length+" update"+(queued.length===1?"":"s"));
+        if(pending) parts.push(pending+" setting change"+(pending===1?"":"s"));
+        row.style.display=parts.length?"":"none";
+        if(parts.length) el("queuedVal").textContent=parts.join(" · ")+" queued — merge on next build";
+      }
+      function syncRpoBadge(){
+        /* The RPO nav badge follows the same rule as every other badge:
+           it counts what needs attention (pending changes), not totals,
+           and hides at zero. */
+        var b=el("navRpoCount"); if(!b) return;
+        var p=(typeof rpoPendingCount==="function") ? rpoPendingCount() : 0;
+        b.textContent=String(p);
+        b.style.display=p?"":"none";
+      }
+      function syncSubBadge(){
+        var n=discover.filter(function(x){return x.sub}).length;
+        var badge=el("navSubCount"); if(!badge) return;
+        badge.textContent=n?String(n):"";
+        badge.style.display=n?"":"none";
+      }
+      function renderNotifications(){
+        var wrap=el("notificationList"); if(!wrap) return; wrap.innerHTML="";
+        if(!updates.length){
+          wrap.innerHTML='<p class="hint" style="margin:0 0 8px">No new updates.</p>'
+            +'<button class="btn small ghost" data-goto-activity>Open Activity</button>';
+        } else {
+          updates.forEach(function(u){
+            var row=document.createElement("div"); row.className="upd-row notif-row"; row.setAttribute("role","button"); row.setAttribute("tabindex","0");
+            row.setAttribute("title","Open in Activity to review and apply this update");
+            row.innerHTML='<span class="thumb"><canvas class="pix" data-seed="'+u.seed+'" width="16" height="16"></canvas></span>'
+              +'<div class="m"><div class="n">'+u.name+' — update available</div><div class="d">'+u.from+' → '+u.to+' · downloaded · select to review in Activity</div></div>'
+              +'<div class="acts"><button class="btn small" data-goto-activity>Review in Activity</button></div>';
+            wrap.appendChild(row);
+          });
+        }
+        paintAll(wrap);
+        wrap.querySelectorAll("[data-goto-activity]").forEach(function(b){
+          b.addEventListener("click",function(e){ e.stopPropagation(); showView("activity"); });
+        });
+        wrap.querySelectorAll(".notif-row").forEach(function(r){
+          r.addEventListener("click",function(){ showView("activity"); });
+          r.addEventListener("keydown",function(e){ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); showView("activity"); } });
+        });
+        syncUpdateBadges();
+      }
+      var activityFilter="all";
+      function autoRebuildOn(){ var t=el("watchToggle"); return !!(t&&t.checked); }
+      function updateActivityAutoUI(){
+        var on=autoRebuildOn();
+        var lbl=el("statActivityUpdatesLabel");
+        if(lbl) lbl.textContent=on
+          ? "updates downloaded · merged automatically"
+          : (updates.length ? "updates downloaded, waiting to apply" : (queued.length ? "updates in the merge queue — apply on next build" : "updates downloaded, waiting to apply"));
+      }
+      function renderActivity(){
+        var feed=el("activityFeed"); if(!feed) return; feed.innerHTML="";
+        var any=false;
+        if(activityFilter==="all"||activityFilter==="update"){
+          var on=autoRebuildOn();
+          updates.forEach(function(u){
+            any=true;
+            var row=document.createElement("div"); row.className="act-row";
+            row.innerHTML='<span class="act-ic"><canvas class="pix" data-seed="'+u.seed+'" width="16" height="16"></canvas></span>'
+              +'<div class="m"><div class="n">'+u.name+' <span class="pill open">UPDATE</span></div><div class="d">'+u.from+' → '+u.to+' · downloaded automatically · '+(on?'applying merges right away — Auto Rebuild is on':'not merged yet — applying adds it to the merge queue, no merge until your next build')+' · changelog provided by Modrinth</div></div>'
+              +'<div class="acts"><button class="btn small ghost" data-cl="'+u.id+'">Changelog</button>'
+              +'<button class="btn small accent" data-upd="'+u.id+'">'+(on?'Apply update &amp; merge':'Apply update')+'</button></div>';
+            feed.appendChild(row);
+          });
+          queued.forEach(function(u){
+            any=true;
+            var qrow=document.createElement("div"); qrow.className="act-row";
+            qrow.innerHTML='<span class="act-ic"><canvas class="pix" data-seed="'+u.seed+'" width="16" height="16"></canvas></span>'
+              +'<div class="m"><div class="n">'+u.name+' <span class="pill smart">QUEUED</span></div><div class="d">'+u.from+' → '+u.to+' · in the merge queue — applies on your next build, no merge has run yet</div></div>'
+              +'<div class="acts"><button class="btn small ghost" data-deq="'+u.id+'">Remove from queue</button></div>';
+            feed.appendChild(qrow);
+          });
+        }
+        el("activityEmpty").style.display=any?"none":"block";
+        var ua=el("updateAllBtn"); if(ua) ua.style.display=updates.length?"":"none";
+        paintAll(feed);
+        feed.querySelectorAll("[data-cl]").forEach(function(b){b.addEventListener("click",function(){openChangelog(b.getAttribute("data-cl"))})});
+        feed.querySelectorAll("[data-upd]").forEach(function(b){b.addEventListener("click",function(){acceptUpdate(b.getAttribute("data-upd"))})});
+        feed.querySelectorAll("[data-deq]").forEach(function(b){b.addEventListener("click",function(){dequeueUpdate(b.getAttribute("data-deq"))})});
+        syncUpdateBadges();
+        updateActivityAutoUI();
+      }
+      function renderUpdates(){ renderNotifications(); renderActivity(); }
+      var clCurrent=null;
+      function openChangelog(id){
+        var u=updates.filter(function(x){return x.id===id})[0]; if(!u) return;
+        clCurrent=id;
+        el("clTitle").textContent=u.name+" — what's new";
+        el("clBody").innerHTML=u.cl.map(function(c){return "<li>"+c+"</li>"}).join("");
+        el("clAccept").textContent=autoRebuildOn()?"Merge with new version":"Add to merge queue";
+        el("changelogScrim").classList.add("on");
+      }
+      function applyVersion(u){
+        var s=sources.filter(function(x){return x.id===u.id})[0];
+        if(s){ s.update=false; s.queued=false; if(u.ver) s.ver=u.ver; }
+      }
+      function queueUpdate(u){
+        updates=updates.filter(function(x){return x.id!==u.id});
+        if(!queued.some(function(x){return x.id===u.id})) queued.push(u);
+        var s=sources.filter(function(x){return x.id===u.id})[0];
+        if(s){ s.update=false; s.queued=true; }
+      }
+      function dequeueUpdate(id){
+        var u=queued.filter(function(x){return x.id===id})[0]; if(!u) return;
+        queued=queued.filter(function(x){return x.id!==id});
+        updates.push(u);
+        var s=sources.filter(function(x){return x.id===id})[0];
+        if(s){ s.queued=false; s.update=true; }
+        renderUpdates(); renderSources();
+        toast(u.name+" removed from the merge queue — the update is waiting to apply again.");
+      }
+      function acceptUpdate(id){
+        var u=updates.filter(function(x){return x.id===id})[0]; if(!u) return;
+        el("changelogScrim").classList.remove("on");
+        if(autoRebuildOn()){
+          updates=updates.filter(function(x){return x.id!==id});
+          applyVersion(u);
+          renderUpdates(); renderSources();
+          showView("workbench");
+          toast("Merging — the merged pack will use the new "+u.name+" ("+u.to+").");
+          runBuild();
+        } else {
+          /* Auto Rebuild off: applying only queues the update. No merge
+             runs — it merges on the next build, whenever that happens. */
+          queueUpdate(u);
+          renderUpdates(); renderSources();
+          toast(u.name+" added to the merge queue — nothing merges until your next build.");
+        }
+      }
+      function updateAll(){
+        if(!updates.length) return;
+        if(autoRebuildOn()){
+          var names=updates.map(function(u){return u.name}).join(", ");
+          updates.slice().forEach(applyVersion);
+          updates=[];
+          renderUpdates(); renderSources();
+          showView("workbench");
+          toast("Merging — applying all updates ("+names+").");
+          runBuild();
+        } else {
+          var n=updates.length;
+          updates.slice().forEach(queueUpdate);
+          renderUpdates(); renderSources();
+          toast(n+" update"+(n===1?"":"s")+" added to the merge queue — nothing merges until your next build.");
+        }
+      }
+
+      /* ================= RPO toggles ================= */
+      function fmtNum(n){ return n.toLocaleString("en-US"); }
+      function rpoValue(t){ return (t.type==="enum"||t.type==="number") ? t.value : t.on; }
+      function snapshotRpo(){
+        var out=[];
+        toggles.forEach(function(g){g.items.forEach(function(t){out.push(String(rpoValue(t)))})});
+        return out.join("|");
+      }
+      var builtSnapshot=snapshotRpo();
+      var rpoDefaultValues=[];
+      toggles.forEach(function(g){g.items.forEach(function(t){rpoDefaultValues.push(rpoValue(t))})});
+      function rpoPendingCount(){
+        var cur=snapshotRpo().split("|"), base=builtSnapshot.split("|"), n=0;
+        cur.forEach(function(v,i){ if(v!==base[i]) n++; });
+        return n;
+      }
+      function clearRpoPending(){ builtSnapshot=snapshotRpo(); updateRpoMeta(); }
+      function condText(g,t){
+        if(t.type==="enum") return '{ "condition": "'+g.ns+":"+t.key+' == \\"'+t.value+'\\"" }';
+        return '{ "condition": "'+g.ns+":"+t.key+'" }';
+      }
+      function groupSummary(g){
+        var on=0, bools=0, files=0;
+        g.items.forEach(function(t){ files+=t.files; if(!t.type){bools++; if(t.on) on++;} });
+        return {on:on, bools:bools, files:files};
+      }
+      function refreshGroupSummary(gi){
+        var g=toggles[gi], s=groupSummary(g);
+        var sum=document.querySelector('[data-gsum="'+gi+'"]');
+        if(sum) sum.textContent=s.on+" of "+s.bools+" switches on · "+fmtNum(s.files)+" files gated";
+        var master=document.querySelector('input[data-master="'+gi+'"]');
+        if(master) master.checked=(s.on===s.bools);
+      }
+      function syncRowState(gi,ii){
+        var t=toggles[gi].items[ii];
+        var wrap=document.querySelector('[data-rpo-row][data-gi="'+gi+'"][data-ii="'+ii+'"]');
+        if(wrap) wrap.setAttribute("data-on", t.type ? "set" : (t.on?"on":"off"));
+      }
+      function updateRpoMeta(){
+        var total=0, files=0, on=0, bools=0;
+        toggles.forEach(function(g){ g.items.forEach(function(t){ total++; files+=t.files; if(!t.type){bools++; if(t.on) on++;} }); });
+        if(el("statRpoTotal")) el("statRpoTotal").textContent=String(total);
+        if(el("statRpoConfigs")) el("statRpoConfigs").textContent=String(toggles.length);
+        if(el("statRpoOn")) el("statRpoOn").textContent=on+" of "+bools;
+        if(el("statRpoFiles")) el("statRpoFiles").textContent=fmtNum(files);
+        var p=rpoPendingCount();
+        if(el("statRpoPending")) el("statRpoPending").textContent=String(p);
+        var bar=el("rpoPending");
+        if(bar){ bar.style.display=p? "flex":"none"; el("rpoPendingText").textContent=p+" change"+(p===1?"":"s"); }
+        syncRpoBadge();
+        syncQueueUI();
+      }
+      function toggleRow(t,gi,ii,full){
+        if(!full){
+          var qrow=document.createElement("div"); qrow.className="toggle-row";
+          qrow.innerHTML='<div class="m"><div class="n">'+t.label+'</div><div class="d">'+t.desc+'</div></div>'
+            +'<label class="switch"><input type="checkbox" data-tog="'+gi+":"+ii+'" '+(t.on?"checked":"")+'><span class="track"></span></label>';
+          return qrow;
+        }
+        var g=toggles[gi];
+        var wrap=document.createElement("div"); wrap.className="toggle-wrap";
+        wrap.setAttribute("data-rpo-row","");
+        wrap.setAttribute("data-gi",gi); wrap.setAttribute("data-ii",ii);
+        wrap.setAttribute("data-search",(t.label+" "+t.key+" "+g.group+" "+g.ns).toLowerCase());
+        wrap.setAttribute("data-on", t.type ? "set" : (t.on?"on":"off"));
+        var typeLabel=t.type==="enum" ? "LIST" : t.type==="number" ? "NUMBER" : "SWITCH";
+        var control;
+        if(t.type==="enum"){
+          control='<select class="rpo-select" data-enum="'+gi+":"+ii+'" aria-label="'+t.label+'">'
+            + t.options.map(function(o){return '<option value="'+o+'"'+(o===t.value?" selected":"")+">"+o+"</option>"}).join("") + "</select>";
+        } else if(t.type==="number"){
+          control='<span class="rpo-range"><input type="range" data-range="'+gi+":"+ii+'" min="'+t.min+'" max="'+t.max+'" step="'+t.step+'" value="'+t.value+'" aria-label="'+t.label+'"><b data-range-val="'+gi+":"+ii+'">'+t.value+t.unit+"</b></span>";
+        } else {
+          control='<label class="switch"><input type="checkbox" data-tog="'+gi+":"+ii+'" '+(t.on?"checked":"")+'><span class="track"></span></label>';
+        }
+        var rowEl=document.createElement("div"); rowEl.className="toggle-row";
+        rowEl.innerHTML='<div class="m"><div class="n">'+t.label+'<span class="key">'+t.key+'</span><span class="pill kind" style="margin-left:8px">'+typeLabel+'</span></div><div class="d">'+t.desc+'</div></div>'
+          +'<span class="files">'+fmtNum(t.files)+' files gated</span>'
+          +'<button class="btn small ghost" data-files="'+gi+":"+ii+'">Files</button>'
+          + control;
+        wrap.appendChild(rowEl);
+        var gated=document.createElement("div"); gated.className="gated"; gated.setAttribute("data-gated",gi+":"+ii);
+        gated.innerHTML='<div class="cond" data-cond>'+condText(g,t)+'</div>'
+          + t.samples.map(function(s){return '<div class="gpath">'+s+'</div>'}).join("")
+          + '<div class="gpath dim">… and '+fmtNum(t.files - t.samples.length)+' more files with the same condition</div>';
+        wrap.appendChild(gated);
+        return wrap;
+      }
+      function bindRpoControls(){
+        document.querySelectorAll("input[data-tog]").forEach(function(cb){
+          cb.addEventListener("change",function(){
+            var p=cb.getAttribute("data-tog").split(":"); var gi=+p[0], ii=+p[1]; var t=toggles[gi].items[ii];
+            t.on=cb.checked;
+            document.querySelectorAll('input[data-tog="'+cb.getAttribute("data-tog")+'"]').forEach(function(o){o.checked=cb.checked});
+            refreshGroupSummary(gi); syncRowState(gi,ii); updateRpoMeta();
+            toast(t.label+(t.on?" on":" off")+" — applies to the next build ("+fmtNum(t.files)+" files gated by it).");
+          });
+        });
+        document.querySelectorAll("select[data-enum]").forEach(function(sel){
+          sel.addEventListener("change",function(){
+            var p=sel.getAttribute("data-enum").split(":"); var gi=+p[0], ii=+p[1]; var t=toggles[gi].items[ii];
+            t.value=sel.value;
+            var wrap=document.querySelector('[data-rpo-row][data-gi="'+gi+'"][data-ii="'+ii+'"]');
+            if(wrap){ var c=wrap.querySelector("[data-cond]"); if(c) c.textContent=condText(toggles[gi],t); }
+            updateRpoMeta();
+            toast(t.label+" set to "+t.value+" — applies to the next build.");
+          });
+        });
+        document.querySelectorAll("input[data-range]").forEach(function(rg){
+          rg.addEventListener("input",function(){
+            var out=document.querySelector('[data-range-val="'+rg.getAttribute("data-range")+'"]');
+            if(out) out.textContent=(Math.round(parseFloat(rg.value)*100)/100)+toggles[+rg.getAttribute("data-range").split(":")[0]].items[+rg.getAttribute("data-range").split(":")[1]].unit;
+          });
+          rg.addEventListener("change",function(){
+            var p=rg.getAttribute("data-range").split(":"); var t=toggles[+p[0]].items[+p[1]];
+            t.value=parseFloat(rg.value);
+            updateRpoMeta();
+            toast(t.label+" set to "+t.value+t.unit+" — applies to the next build.");
+          });
+        });
+        document.querySelectorAll("input[data-master]").forEach(function(m){
+          m.addEventListener("change",function(){
+            var gi=+m.getAttribute("data-master"); var g=toggles[gi];
+            g.items.forEach(function(t,ii){
+              if(t.type) return;
+              t.on=m.checked;
+              document.querySelectorAll('input[data-tog="'+gi+":"+ii+'"]').forEach(function(o){o.checked=m.checked});
+              syncRowState(gi,ii);
+            });
+            refreshGroupSummary(gi); updateRpoMeta();
+            toast("All "+g.group+" switches turned "+(m.checked?"on":"off")+" — applies to the next build.");
+          });
+        });
+        document.querySelectorAll("button[data-files]").forEach(function(b){
+          b.addEventListener("click",function(){
+            var wrap=b.closest(".toggle-wrap"); if(!wrap) return;
+            var panel=wrap.querySelector(".gated");
+            var open=panel.classList.toggle("on");
+            b.textContent=open?"Hide":"Files";
+          });
+        });
+      }
+      function renderNamespaces(){
+        var wrap=el("nsList"); if(!wrap) return; wrap.innerHTML="";
+        toggles.forEach(function(g,gi){
+          var s=groupSummary(g);
+          var row=document.createElement("div"); row.className="ns-row";
+          row.innerHTML='<span class="ns-name">'+g.ns+'</span><span class="ns-meta">'+g.group+' · '+g.items.length+' entries · '+fmtNum(s.files)+' gated files</span>'
+            +'<button class="btn small ghost" data-rename="'+gi+'">Rename</button>';
+          wrap.appendChild(row);
+        });
+        wrap.querySelectorAll("[data-rename]").forEach(function(b){
+          b.addEventListener("click",function(){ startRename(+b.getAttribute("data-rename"), b.parentElement); });
+        });
+      }
+      function startRename(gi,row){
+        var g=toggles[gi];
+        row.innerHTML='<input class="ns-input" type="text" value="'+g.ns+'" aria-label="Namespace name">'
+          +'<span class="ns-meta">'+g.group+'</span>'
+          +'<button class="btn small accent" data-save>Save</button><button class="btn small ghost" data-cancel>Cancel</button>';
+        var input=row.querySelector(".ns-input"); input.focus(); input.select();
+        row.querySelector("[data-cancel]").addEventListener("click",renderNamespaces);
+        row.querySelector("[data-save]").addEventListener("click",function(){
+          var v=input.value.trim().toLowerCase();
+          if(!/^[a-z0-9_]+$/.test(v)){ toast("Namespaces use lowercase letters, numbers, and underscores only."); return; }
+          if(toggles.some(function(o,oi){return oi!==gi && o.ns===v})){ toast("That namespace is already used by another config."); return; }
+          if(v===g.ns){ renderNamespaces(); return; }
+          var files=groupSummary(g).files;
+          g.ns=v; renderToggles();
+          toast("Namespace renamed to "+v+" — conditions in "+fmtNum(files)+" files rewritten.");
+        });
+      }
+      var rpoFilter="all";
+      function applyRpoFilters(){
+        var input=el("rpoSearch"); if(!input) return;
+        var q=input.value.toLowerCase(); var any=false;
+        document.querySelectorAll("[data-rpo-row]").forEach(function(w){
+          var matchF=rpoFilter==="all" || (rpoFilter==="on" && w.getAttribute("data-on")!=="off") || (rpoFilter==="off" && w.getAttribute("data-on")==="off");
+          var matchQ=!q || w.getAttribute("data-search").indexOf(q)>=0;
+          w.style.display=(matchF&&matchQ)?"":"none";
+          if(matchF&&matchQ) any=true;
+        });
+        document.querySelectorAll("[data-rpo-group]").forEach(function(g){
+          var vis=Array.prototype.some.call(g.querySelectorAll("[data-rpo-row]"),function(r){return r.style.display!=="none"});
+          g.style.display=vis?"":"none";
+        });
+        var empty=el("rpoEmpty"); if(empty) empty.style.display=any?"none":"block";
+      }
+      function renderToggles(){
+        var f=el("rpoFull"); f.innerHTML="";
+        toggles.forEach(function(g,gi){
+          var box=document.createElement("div"); box.className="rpo-group"; box.setAttribute("data-rpo-group",gi);
+          var s=groupSummary(g);
+          var head=document.createElement("div"); head.className="gh";
+          head.innerHTML='<span class="n">'+g.group+'</span><span class="badge rpo">RESPACKOPTS</span><span class="ns">namespace: '+g.ns+'</span>'
+            +'<span class="gsum" data-gsum="'+gi+'">'+s.on+' of '+s.bools+' switches on · '+fmtNum(s.files)+' files gated</span>'
+            +'<label class="gmaster"><span>All</span><span class="switch"><input type="checkbox" data-master="'+gi+'"'+(s.on===s.bools?" checked":"")+'><span class="track"></span></span></label>';
+          box.appendChild(head);
+          g.items.forEach(function(t,ii){ box.appendChild(toggleRow(t,gi,ii,true)); });
+          f.appendChild(box);
+        });
+        bindRpoControls();
+        renderNamespaces();
+        updateRpoMeta();
+        applyRpoFilters();
+      }
+      el("rpoSearch").addEventListener("input",applyRpoFilters);
+      document.querySelectorAll(".chip[data-rpo-filter]").forEach(function(c){
+        c.addEventListener("click",function(){
+          document.querySelectorAll(".chip[data-rpo-filter]").forEach(function(o){o.classList.remove("active")});
+          c.classList.add("active"); rpoFilter=c.getAttribute("data-rpo-filter"); applyRpoFilters();
+        });
+      });
+      el("rpoRebuildBtn").addEventListener("click",function(){ showView("workbench"); runBuild(); });
+      el("rpoResetBtn").addEventListener("click",function(){
+        var i=0;
+        toggles.forEach(function(g){ g.items.forEach(function(t){
+          var v=rpoDefaultValues[i++];
+          if(t.type==="enum") t.value=v;
+          else if(t.type==="number") t.value=parseFloat(v);
+          else t.on=(v===true);
+        }); });
+        renderToggles();
+        toast("Settings reset to the values defined by the source packs.");
+      });
+
+      /* ================= discover ================= */
+      function renderDiscover(){
+        var grid=el("discGrid"); grid.innerHTML="";
+        var filter=el("discSearch").value;
+        var cat=el("discCategory").value, packType=el("discPackType").value, ver=el("discVersion").value, sort=el("discSort").value;
+        var list=discover.filter(function(d){
+          /* Shaders are excluded from Discover entirely — they never
+             reach this list, and this guard keeps it that way. */
+          if(d.cat==="Shaders") return false;
+          if(filter && (d.name+" "+d.author+" "+d.desc).toLowerCase().indexOf(filter.toLowerCase())<0) return false;
+          if(cat!=="all" && d.cat!==cat) return false;
+          if(packType!=="all" && d.type!==packType) return false;
+          if(ver!=="all" && d.versions.indexOf(ver)<0) return false;
+          return true;
+        });
+        if(sort==="downloads") list.sort(function(a,b){return b.dlNum-a.dlNum});
+        else if(sort==="follows") list.sort(function(a,b){return parseFloat(b.follows)-parseFloat(a.follows)});
+        else if(sort==="newest") list.sort(function(a,b){return a.createdDays-b.createdDays});
+        else if(sort==="updated") list.sort(function(a,b){return a.updatedDays-b.updatedDays});
+        el("discCount").textContent=list.length+" result"+(list.length===1?"":"s");
+        list.forEach(function(d){
+          var card=document.createElement("div"); card.className="disc";
+          card.innerHTML='<div class="banner"><canvas class="pix" data-seed="'+d.seed+'" width="32" height="12"></canvas></div>'
+            +'<div class="b"><div class="n">'+d.name+' <span class="badge '+(d.type==="RP"?"rp":"dp")+'">'+(d.type==="RP"?"RESOURCE":"DATA")+'</span></div>'
+            +'<div class="a">by '+d.author+' · Modrinth</div><div class="d">'+d.desc+'</div>'
+            +'<div class="meta-line">'+d.cat+' · MC '+d.versions.join(", ")+' · updated '+d.updatedDays+'d ago</div>'
+            +'<div class="f"><span class="dl">'+d.dl+' · '+d.follows+' follows</span>'
+            +'<button class="btn small '+(d.sub?"ghost":"accent")+'" style="margin-left:auto" data-sub="'+d.name+'">'+(d.sub?"✓ Subscribed":"Subscribe")+'</button></div></div>';
+          grid.appendChild(card);
+        });
+        if(!list.length) grid.innerHTML='<p class="hint">No results match the current search and filters.</p>';
+        paintAll(grid);
+        grid.querySelectorAll("[data-sub]").forEach(function(b){
+          b.addEventListener("click",function(){
+            var d=discover.filter(function(x){return x.name===b.getAttribute("data-sub")})[0];
+            d.sub=!d.sub;
+            /* Subscribing and Sources are the same list: subscribing
+               downloads the pack and adds it as a source; unsubscribing
+               removes that source again. */
+            if(d.sub){
+              var sid="disc-"+d.seed;
+              if(!sources.some(function(s){return s.id===sid})){
+                /* Insert at the end of the pack's own type group so the
+                   ORDER numbers stay sequential within each group. */
+                var at=sources.length;
+                for(var i=sources.length-1;i>=0;i--){ if(sources[i].type===d.type){ at=i+1; break; } }
+                sources.splice(at,0,{id:sid, name:d.name, type:d.type, kind:"Modrinth", files:"downloaded", ver:d.versions[0], sub:true, on:true, seed:d.seed, note:"Subscribed via Discover · by "+d.author+" · update checks on"});
+              }
+              d.srcId=sid;
+            } else if(d.srcId){
+              sources=sources.filter(function(s){return s.id!==d.srcId});
+              d.srcId=null;
+            }
+            renderSources();
+            syncSubBadge();
+            renderDiscover();
+            toast(d.sub? d.name+" subscribed. The pack has been downloaded and added to Sources." : d.name+" unsubscribed and removed from Sources.");
+          });
+        });
+      }
+
+      /* ================= build simulation ================= */
+      var building=false;
+      function packOutputFile(){
+        var raw=el("packName") ? el("packName").value.trim() : "";
+        return (raw ? slugify(raw) : "packmerge")+".zip";
+      }
+      function syncPackFileName(){
+        var hint=el("packFileName");
+        if(hint) hint.textContent=packOutputFile();
+      }
+      function runBuild(){
+        if(building) return; building=true;
+        var btn=el("buildBtn"), bar=el("buildBar"), prog=el("buildProgress"), log=el("buildLog");
+        btn.disabled=true; prog.classList.add("on");
+        log.innerHTML='<span class="dim">— building —</span>';
+        var packName=el("packName").value.trim()||"packmerge";
+        var packDesc=el("packDesc").value.trim();
+        var outFile=packOutputFile();
+        var queueLines=queued.map(function(u){return "[ok] Applied queued update: "+u.name+" "+u.from+" → "+u.to});
+        var enabled=sources.filter(function(s){return s.on});
+        var fileTotal=0;
+        enabled.forEach(function(s){ var n=parseInt(String(s.files).replace(/[^0-9]/g,""),10); if(!isNaN(n)) fileTotal+=n; });
+        var rpoSettings=0; toggles.forEach(function(g){ rpoSettings+=g.items.length; });
+        var openN=conflictRows().filter(function(r){return r.getAttribute("data-status")==="open"}).length;
+        var lines=queueLines.concat([
+          "[ok] Fetched "+enabled.length+" sources ("+Math.max(enabled.length-1,0)+" cached, "+(enabled.length?1:0)+" downloaded)",
+          "[ok] Smart merge: lang/en_us.json — union, 214 keys, 3 packs",
+          "[ok] Smart merge: tags mineable/pickaxe — union, 41 values",
+          openN
+            ? '<span class="warn">[warn] '+openN+' conflict'+(openN===1?"":"s")+' open — winners by list order / saved rule</span>'
+            : "[ok] No open conflicts — every contested file has a decision",
+          "[ok] Data packs: namespaces kept intact (terralith, incendium, minecraft)",
+          "[ok] RPO: applied "+rpoSettings+" setting values from "+toggles.length+" configs",
+          "[ok] pack.mcmeta: description “"+(packDesc||"—")+"”",
+          "[ok] Validation passed: pack.mcmeta, "+fileTotal.toLocaleString("en-US")+" files",
+          '<span class="ok">[done] Wrote output to Downloads folder: '+outFile+' (48.2 MB)</span>'
+        ]);
+        var i=0;
+        var timer=setInterval(function(){
+          if(i<lines.length){ log.innerHTML+="\n"+lines[i]; log.scrollTop=log.scrollHeight; bar.style.width=Math.round(((i+1)/lines.length)*100)+"%"; i++; }
+          else{
+            clearInterval(timer); building=false; btn.disabled=false;
+            if(queued.length){
+              queued.slice().forEach(applyVersion);
+              queued=[];
+              renderSources();
+            }
+            renderActivity();
+            clearRpoPending();
+            var now=new Date();
+            el("lastBuild").textContent="Today, "+now.toLocaleTimeString([], {hour:"numeric",minute:"2-digit"})+" · 3.8s";
+            toast("Build complete. Output saved to the Downloads folder.");
+          }
+        },340);
+      }
+
+      /* ================= conflicts ================= */
+      var conflictRows=function(){return Array.prototype.slice.call(document.querySelectorAll("[data-row]"))};
+      var selectedConflict="grass", textureWinner="Stay True";
+      var diffData={
+        lang:{a:"Default Dark Mode", b:"Stay True", note:"Keys present in only one source were merged automatically. Only the values below disagree — select the value to keep for each key.", rows:[
+          ["menu.returnToGame","Back to Game","Return to Game"],
+          ["menu.quit","Save & Quit to Title","Quit to Title"],
+          ["options.gamma.default","Gamma: Default","Brightness: Default"]
+        ]},
+        model:{a:"Faithful 32×", b:"Fresh Animations", note:"Both sources define this model. Properties that agree are merged automatically; select the value to keep for each property that differs.", rows:[
+          ["parent","minecraft:item/generated","minecraft:item/handheld"],
+          ["textures.layer0","minecraft:item/iron_pickaxe","fresh_an:item/iron_pickaxe"],
+          ["display.thirdperson_righthand.rotation","[ 0, -90, 55 ]","[ 0, -80, 40 ]"],
+          ["overrides","none","2 entries (damage predicates)"]
+        ]}
+      };
+      function rowById(id){return document.querySelector('[data-row][data-id="'+id+'"]')}
+      function priorityWinner(id){
+        if(id==="grass") return textureWinner;
+        if(id==="lang") return "Stay True";
+        if(id==="model") return "Fresh Animations";
+        return "Higher-priority source";
+      }
+      function appendRule(text){
+        el("rulesEmpty").style.display="none";
+        var rl=el("rulesList");
+        var exists=Array.prototype.some.call(rl.querySelectorAll(".conflict-path"),function(d){return d.textContent===text});
+        if(!exists){var d=document.createElement("div"); d.className="conflict-path"; d.textContent=text; rl.appendChild(d)}
+      }
+      function updateConflictSummary(){
+        var open=conflictRows().filter(function(r){return r.getAttribute("data-status")==="open"});
+        var n=open.length;
+        var nav=el("navConflictCount");
+        nav.textContent=String(n); nav.style.display=n?"":"none";
+        el("statOpen").textContent=String(n);
+        el("wbOpenCount").textContent=String(n);
+        el("jumpOpenBtn").disabled=!n;
+        if(n){
+          var first=open[0];
+          el("wbNextPath").textContent=first.querySelector(".path").textContent;
+          el("wbNextParties").textContent=first.querySelector(".parties").textContent;
+          el("conflictPos").textContent="Needs decision · 1 of "+n+" open";
+        }else{
+          el("wbNextPath").textContent="Nothing waiting";
+          el("wbNextParties").textContent="All contested files have a saved decision.";
+          el("conflictPos").textContent="All open conflicts resolved";
+        }
+        document.querySelectorAll("[data-group]").forEach(function(g){
+          var c=g.querySelector("[data-group-count]");
+          if(c) c.textContent=g.querySelectorAll("[data-row]").length+" files";
+        });
+      }
+      function markResolved(id,method){
+        var row=rowById(id); if(!row||row.getAttribute("data-status")!=="open") return;
+        row.setAttribute("data-status","resolved"); row.classList.add("resolved");
+        var pill=row.querySelector("[data-status-pill]");
+        pill.className="pill done"; pill.textContent=method==="rule"?"RULE SAVED":"PRIORITY";
+        var apply=row.querySelector("[data-apply]"); if(apply){apply.disabled=true; apply.textContent="Applied"}
+        var sg=el("settledGroup"); if(sg&&row.parentElement!==sg) sg.appendChild(row);
+        if(id==="grass"){
+          var tp=el("textureStatusPill"); tp.className="pill done"; tp.textContent="Resolved";
+          el("conflictPos").textContent=method==="rule"?"Resolved · saved as rule":"Resolved · list priority applied";
+        }
+        if(diffData[id]&&selectedConflict===id){
+          var dp=el("diffStatusPill"); dp.className="pill done"; dp.textContent="Resolved";
+        }
+        if(method==="rule") appendRule(row.querySelector(".path").textContent+" → "+priorityWinner(id));
+        updateConflictSummary();
+      }
+      function renderDiff(id){
+        var d=diffData[id]; if(!d) return;
+        var row=rowById(id);
+        el("diffPath").textContent=row.querySelector(".path").textContent;
+        el("diffNote").textContent=d.note;
+        var pill=el("diffStatusPill");
+        var resolved=row.getAttribute("data-status")!=="open";
+        pill.className="pill "+(resolved?"done":"open");
+        pill.textContent=resolved?"Resolved":d.rows.length+" values differ";
+        var t=el("diffTable"); t.innerHTML="";
+        var head=document.createElement("div"); head.className="diff-row head";
+        head.innerHTML="<div>Key / property</div><div>"+d.a+"</div><div>"+d.b+"</div>";
+        t.appendChild(head);
+        d.rows.forEach(function(r){
+          var div=document.createElement("div"); div.className="diff-row";
+          var key=document.createElement("div"); key.className="dk"; key.textContent=r[0]; div.appendChild(key);
+          [r[1],r[2]].forEach(function(val,vi){
+            var cell=document.createElement("button"); cell.type="button"; cell.className="diff-cell"+(vi===1?" chosen":"");
+            cell.innerHTML="";
+            cell.appendChild(document.createTextNode(val));
+            var tag=document.createElement("span"); tag.className="tag"; tag.textContent="Keep this value"; cell.appendChild(tag);
+            cell.addEventListener("click",function(){
+              div.querySelectorAll(".diff-cell").forEach(function(c){c.classList.remove("chosen")});
+              cell.classList.add("chosen");
+              toast((vi===0?d.a:d.b)+" value kept for "+r[0]+".");
+            });
+            div.appendChild(cell);
+          });
+          t.appendChild(div);
+        });
+      }
+      function selectConflict(id,scroll){
+        selectedConflict=id;
+        conflictRows().forEach(function(r){r.classList.toggle("selected",r.getAttribute("data-id")===id)});
+        var row=rowById(id); if(!row) return;
+        if(row.getAttribute("data-kind")==="texture"){
+          if(scroll) el("textureDetailCard").scrollIntoView({behavior:"smooth",block:"start"});
+        }else{
+          renderDiff(id);
+          if(scroll) el("diffCard").scrollIntoView({behavior:"smooth",block:"start"});
+        }
+      }
+      document.querySelectorAll(".side-pick").forEach(function(p){
+        p.addEventListener("click",function(){
+          document.querySelectorAll(".side-pick").forEach(function(o){o.classList.remove("winner")});
+          p.classList.add("winner");
+          textureWinner=p.querySelector(".pn").textContent;
+          toast(textureWinner+" set as winner for "+el("texturePath").textContent.split("/").pop()+".");
+        });
+      });
+      document.querySelectorAll("[data-review]").forEach(function(b){
+        b.addEventListener("click",function(){selectConflict(b.getAttribute("data-review"),true)});
+      });
+      document.querySelectorAll("[data-apply]").forEach(function(b){
+        b.addEventListener("click",function(){
+          markResolved(b.getAttribute("data-apply"),"priority");
+          toast("List priority applied. The lower source in the list wins this file.");
+        });
+      });
+      conflictRows().forEach(function(r){
+        r.addEventListener("click",function(e){
+          if(e.target.closest("button")) return;
+          selectConflict(r.getAttribute("data-id"),false);
+        });
+      });
+      var activeFilter="all";
+      function applyConflictFilters(){
+        var q=el("conflictSearch").value.toLowerCase(); var anyVisible=false;
+        conflictRows().forEach(function(r){
+          var f=activeFilter;
+          var matchF=f==="all"||(f==="open"&&r.getAttribute("data-status")==="open")||(f==="texture"&&r.getAttribute("data-kind")==="texture")||(f==="json"&&r.getAttribute("data-kind")==="json")||(f==="vanilla"&&r.getAttribute("data-namespace")==="minecraft");
+          var matchQ=!q||r.getAttribute("data-search").indexOf(q)>=0||r.querySelector(".path").textContent.toLowerCase().indexOf(q)>=0;
+          r.style.display=(matchF&&matchQ)?"":"none";
+          if(matchF&&matchQ) anyVisible=true;
+        });
+        document.querySelectorAll("[data-group]").forEach(function(g){
+          var vis=Array.prototype.some.call(g.querySelectorAll("[data-row]"),function(r){return r.style.display!=="none"});
+          g.style.display=vis?"":"none";
+        });
+        el("queueEmpty").style.display=anyVisible?"none":"block";
+      }
+      el("conflictSearch").addEventListener("input",applyConflictFilters);
+      document.querySelectorAll(".chip[data-filter]").forEach(function(c){
+        c.addEventListener("click",function(){
+          document.querySelectorAll(".chip[data-filter]").forEach(function(o){o.classList.remove("active")});
+          c.classList.add("active"); activeFilter=c.getAttribute("data-filter"); applyConflictFilters();
+        });
+      });
+      el("bulkPriorityBtn").addEventListener("click",function(){
+        var open=conflictRows().filter(function(r){return r.getAttribute("data-status")==="open"});
+        if(!open.length){toast("No open conflicts to apply priority to.");return}
+        open.forEach(function(r){markResolved(r.getAttribute("data-id"),"priority")});
+        toast("List priority applied to "+open.length+" open conflict"+(open.length===1?"":"s")+".");
+      });
+      el("bulkRuleBtn").addEventListener("click",function(){
+        var open=conflictRows().filter(function(r){return r.getAttribute("data-status")==="open"});
+        if(!open.length){toast("No open conflicts to save rules for.");return}
+        open.forEach(function(r){markResolved(r.getAttribute("data-id"),"rule")});
+        toast("Priority winners saved as merge rules for "+open.length+" conflict"+(open.length===1?"":"s")+".");
+      });
+      el("conflictAccept").addEventListener("click",function(){
+        markResolved("grass","rule");
+        toast("Conflict resolved and saved as a merge rule.");
+      });
+      function cycleConflict(dir){
+        var open=conflictRows().filter(function(r){return r.getAttribute("data-status")==="open"});
+        if(!open.length){ toast("All conflicts are resolved."); return; }
+        if(open.length===1 && open[0].getAttribute("data-id")===selectedConflict){ toast("This is the only open conflict."); return; }
+        var ids=open.map(function(r){return r.getAttribute("data-id")});
+        var i=ids.indexOf(selectedConflict);
+        if(i<0) i = dir>0 ? -1 : 0;
+        var next=ids[(i+dir+ids.length)%ids.length];
+        selectConflict(next,true);
+        el("conflictPos").textContent="Needs decision · "+(ids.indexOf(next)+1)+" of "+ids.length+" open";
+      }
+      el("conflictSkip").addEventListener("click",function(){cycleConflict(1)});
+      el("conflictPrev").addEventListener("click",function(){cycleConflict(-1)});
+      function reviewNext(){
+        showView("conflicts");
+        var first=conflictRows().filter(function(r){return r.getAttribute("data-status")==="open"})[0];
+        if(first) selectConflict(first.getAttribute("data-id"),true);
+        else toast("All conflicts are resolved.");
+      }
+      el("openConflictsBtn").addEventListener("click",function(){showView("conflicts")});
+      el("reviewNextBtn").addEventListener("click",reviewNext);
+      el("jumpOpenBtn").addEventListener("click",reviewNext);
+      renderDiff("lang"); updateConflictSummary();
+
+      /* ================= nav & misc wiring ================= */
+      document.querySelectorAll(".navitem").forEach(function(n){
+        n.addEventListener("click",function(){
+          var v=n.getAttribute("data-view");
+          if(v==="conflicts"){showView("conflicts")} else {showView(v)}
+        });
+      });
+      function syncAutoToggles(on){
+        var mainToggle=el("watchToggle"), activityToggle=el("activityWatchToggle");
+        if(mainToggle) mainToggle.checked=on;
+        if(activityToggle) activityToggle.checked=on;
+        var mainWrap=el("watchWrap"), activityWrap=el("activityWatchWrap");
+        if(mainWrap) mainWrap.classList.toggle("on",on);
+        if(activityWrap) activityWrap.classList.toggle("on",on);
+      }
+      function handleAutoRebuildChange(on){
+        syncAutoToggles(on);
+        updateActivityAutoUI();
+        if(on && (updates.length||queued.length)){
+          /* Auto Rebuild on: anything downloaded or already queued merges now, no click needed */
+          updates.slice().forEach(applyVersion);
+          queued.slice().forEach(applyVersion);
+          updates=[]; queued=[];
+          renderUpdates(); renderSources();
+          showView("workbench");
+          toast("Auto Rebuild on — downloaded and queued updates are merging automatically.");
+          runBuild();
+        } else {
+          toast(on
+            ? "Auto Rebuild on. Local changes and downloaded updates now merge automatically."
+            : "Auto Rebuild off. Updates will still download, but nothing merges until you click.");
+          renderActivity();
+        }
+      }
+      el("watchToggle").addEventListener("change",function(e){ handleAutoRebuildChange(e.target.checked); });
+      var activityToggleEl=el("activityWatchToggle");
+      if(activityToggleEl) activityToggleEl.addEventListener("change",function(e){ handleAutoRebuildChange(e.target.checked); });
+      el("buildBtn").addEventListener("click",runBuild);
+      el("packName").addEventListener("input",syncPackFileName);
+      syncPackFileName();
+      el("checkBtn").addEventListener("click",function(){toast("Update check complete. "+updates.length+" update"+(updates.length===1?" is":"s are")+" available in Activity.")});
+      el("viewActivityBtn").addEventListener("click",function(){showView("activity")});
+      el("updateAllBtn").addEventListener("click",updateAll);
+      el("activityCheckBtn").addEventListener("click",function(){
+        toast(autoRebuildOn()
+          ? "Update check complete. Auto Rebuild is on — new versions download and merge automatically."
+          : "Update check complete. "+updates.length+" update"+(updates.length===1?" is":"s are")+" downloaded and waiting in the timeline — applying adds "+(updates.length===1?"it":"them")+" to the merge queue; nothing merges until your next build.");
+      });
+      document.querySelectorAll(".chip[data-activity-filter]").forEach(function(c){
+        c.addEventListener("click",function(){
+          document.querySelectorAll(".chip[data-activity-filter]").forEach(function(o){o.classList.remove("active")});
+          c.classList.add("active"); activityFilter=c.getAttribute("data-activity-filter"); renderActivity();
+        });
+      });
+      el("clAccept").addEventListener("click",function(){if(clCurrent)acceptUpdate(clCurrent)});
+      document.querySelectorAll("[data-close]").forEach(function(b){b.addEventListener("click",function(){el("changelogScrim").classList.remove("on")})});
+      /* ================= add sources: URL modal + local file picker ================= */
+      function slugify(name){ return String(name).toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,"")||"pack"; }
+      function uniqueSrcId(prefix,name){
+        var base=prefix+"-"+slugify(name), id=base, n=2;
+        while(sources.some(function(s){return s.id===id})){ id=base+"-"+n; n++; }
+        return id;
+      }
+      function titleFromSlug(slug){
+        if(!slug) return "";
+        return slug.split(/[-_.+\s]+/).filter(Boolean).map(function(w){ return w.charAt(0).toUpperCase()+w.slice(1); }).join(" ");
+      }
+      /* New sources join the end of their own pack-type group, matching
+         Discover subscriptions, so ORDER numbers stay sequential. */
+      function insertSource(s){
+        var at=sources.length;
+        for(var i=sources.length-1;i>=0;i--){ if(sources[i].type===s.type){ at=i+1; break; } }
+        sources.splice(at,0,s);
+      }
+
+      /* Pack type is read from the link itself — Modrinth project links
+         carry /resourcepack/ or /datapack/ in the path, and direct links
+         use the same wording in their path or file name — so the window
+         never asks the user to pick one. */
+      function packTypeFromUrl(url){
+        var text=(url.pathname+" "+url.search).toLowerCase();
+        try{ text=decodeURIComponent(text); }catch(ex){}
+        return /(^|[^a-z0-9])(data[\s_-]*pack|datapacks)([^a-z0-9]|$)/.test(text) ? "DP" : "RP";
+      }
+
+      /* "+ Add URL" opens a link-entry window. Modrinth links subscribe the
+         pack (update checks on); direct .zip links are added as plain
+         downloads. The name is derived from the link itself. */
+      function openAddUrl(){
+        el("addUrlInput").value="";
+        el("addUrlErr").style.display="none";
+        el("addUrlScrim").classList.add("on");
+        setTimeout(function(){ el("addUrlInput").focus(); },30);
+      }
+      el("addUrlBtn").addEventListener("click",openAddUrl);
+      el("addUrlCancel").addEventListener("click",function(){ el("addUrlScrim").classList.remove("on"); });
+      el("addUrlForm").addEventListener("submit",function(e){
+        e.preventDefault();
+        var err=el("addUrlErr");
+        function fail(msg){ err.textContent=msg; err.style.display="block"; el("addUrlInput").focus(); }
+        var raw=el("addUrlInput").value.trim();
+        if(!raw){ fail("Paste a link first — a Modrinth project link or a direct .zip link."); return; }
+        var url;
+        try{ url=new URL(raw); }catch(ex){ fail("That doesn't look like a complete link. Paste the full link, starting with https://"); return; }
+        if(url.protocol!=="http:"&&url.protocol!=="https:"){ fail("Links start with http:// or https:// — paste the full link."); return; }
+        var isModrinth=/(^|\.)modrinth\.com$/i.test(url.hostname);
+        var nm, kind, sub=false;
+        if(isModrinth){
+          var seg=url.pathname.split("/").filter(Boolean);
+          nm=titleFromSlug(seg.length?seg[seg.length-1]:"")||"Modrinth pack";
+          kind="Modrinth"; sub=true;
+        } else {
+          if(!/\.zip$/i.test(url.pathname)){ fail("That link doesn't point to a .zip file. Use a Modrinth project link, or a direct link ending in .zip."); return; }
+          var fname=url.pathname.split("/").pop()||"";
+          try{ fname=decodeURIComponent(fname); }catch(ex2){}
+          nm=titleFromSlug(fname.replace(/\.zip$/i,""))||"Untitled pack";
+          kind="Direct link";
+        }
+        var s={id:uniqueSrcId(isModrinth?"modrinth":"url",nm), name:nm, type:packTypeFromUrl(url), kind:kind,
+               files:"downloaded", ver:"latest", sub:sub, on:true, seed:slugify(nm),
+               note:sub? "Added from link · update checks on" : "Added from link"};
+        insertSource(s);
+        el("addUrlScrim").classList.remove("on");
+        renderSources();
+        toast(nm+" added to Sources — it merges on the next build.");
+      });
+
+      /* "+ Add local file…" opens the system file picker directly — no
+         dialog and no toast first, exactly as in the app. Picked .zip
+         files join Sources with their real name, size, and entry count
+         read from the file itself. */
+      function zipEntryCount(file){
+        return new Promise(function(resolve){
+          var tailLen=Math.min(file.size,66000);
+          var reader=new FileReader();
+          reader.onload=function(){
+            try{
+              var dv=new DataView(reader.result);
+              for(var i=dv.byteLength-22;i>=0;i--){
+                if(dv.getUint32(i,true)===0x06054b50){ resolve(dv.getUint16(i+10,true)); return; }
+              }
+              resolve(null);
+            }catch(ex){ resolve(null); }
+          };
+          reader.onerror=function(){ resolve(null); };
+          reader.readAsArrayBuffer(file.slice(file.size-tailLen));
+        });
+      }
+      el("addLocalBtn").addEventListener("click",function(){ el("localFileInput").click(); });
+      el("localFileInput").addEventListener("change",function(){
+        var picked=Array.prototype.slice.call(this.files||[]);
+        this.value="";
+        if(!picked.length) return;
+        Promise.all(picked.map(function(f){ return zipEntryCount(f).then(function(n){ return {file:f,count:n}; }); })).then(function(results){
+          var added=[];
+          results.forEach(function(r){
+            var nm=r.file.name.replace(/\.zip$/i,"").replace(/[-_]+/g," ").trim()||r.file.name;
+            var mb=r.file.size/1048576;
+            var sizeTxt=mb>=1? mb.toFixed(1)+" MB" : Math.max(1,Math.round(r.file.size/1024))+" KB";
+            insertSource({id:uniqueSrcId("local",nm), name:nm, type:"RP", kind:"Local zip",
+              files:(r.count!=null? r.count.toLocaleString("en-US")+" files" : sizeTxt),
+              ver:"—", on:true, seed:slugify(nm), note:"Added from this device · "+sizeTxt});
+            added.push(nm);
+          });
+          renderSources();
+          toast(added.length===1? added[0]+" added to Sources — it merges on the next build." : added.length+" packs added to Sources — they merge on the next build.");
+        });
+      });
+      el("discoverBtn").addEventListener("click",function(){showView("discover")});
+      el("clearBtn").addEventListener("click",function(){toast("Clear removes all sources from the list. Saved overrides are retained.")});
+      el("collectionBtn").addEventListener("click",function(){toast("Import a Modrinth collection to subscribe to all included packs at once.")});
+      el("appUpdateBtn").addEventListener("click",function(){toast("Packmerge is up to date (v2.1.1). This checks the app itself — pack updates live in Activity.")});
+      document.querySelectorAll("[data-browse-output]").forEach(function(b){
+        b.addEventListener("click",function(){ toast("Downloads folder opened — "+packOutputFile()+" (48.2 MB) is the latest output."); });
+      });
+      el("discSearch").addEventListener("input",renderDiscover);
+      ["discCategory","discPackType","discVersion","discSort"].forEach(function(id){ el(id).addEventListener("change",renderDiscover); });
+
+      /* ================= keyboard: Ctrl+Enter builds from anywhere ================= */
+      document.querySelectorAll(".scrim").forEach(function(s){s.addEventListener("click",function(e){if(e.target===s)s.classList.remove("on")})});
+      document.addEventListener("keydown",function(e){
+        if((e.ctrlKey||e.metaKey)&&e.key==="Enter"){e.preventDefault();showView("workbench");runBuild()}
+        else if(e.key==="Escape"){document.querySelectorAll(".scrim.on").forEach(function(s){s.classList.remove("on")}); closeInspector();}
+      });
+
+      /* ================= guided tour ================= */
+      var tourSteps=[
+        {target:null, title:"Welcome to the Workbench", body:"This tour covers the main workflow: adding sources, resolving conflicts, and building the merged output. Use Next and Back to move through each step, or Skip to exit at any time."},
+        {target:"#sourcesCard", title:"1 · Sources", body:"All resource packs and data packs included in the merge are listed here. Order determines priority: when two sources contain the same file, the source lower in the list takes precedence. Use the switch on each row to include or exclude a source, the inspect button to open that source's file tree and merge notes, and add new sources by URL, local file, or Modrinth."},
+        {target:"#conflictCard", title:"2 · Conflicts", body:"The Workbench shows only the essentials: how many conflicts need a decision and which file is next. Select Review next conflict to open the Conflicts page, where the full queue, side-by-side comparisons, JSON diffs, and bulk actions live. Saving a choice as a merge rule applies it automatically in future builds."},
+        {target:"#watchWrap", title:"3 · Watch for changes · Auto Rebuild", body:"This switch is the Auto Rebuild control. On, local file changes merge automatically and updates downloaded in Activity merge automatically. Off, local changes are ignored and updates still download; applying one adds it to the merge queue instead of merging — queued updates merge on your next build. It is off by default."},
+        {target:"#buildCard", title:"4 · Build", body:"Set the pack name and description for the merged output — the name becomes the output file name, and the description is written to pack.mcmeta and shown in-game. Then select Merge packs (or press Ctrl+Enter) to run the merge with the current sources, conflict decisions, and RPO settings. The panel shows the estimated output size, and output is saved to the Downloads folder by default. Progress and the build log are shown in this panel."},
+        {target:"#notificationsCard", title:"5 · Notifications & Activity", body:"Notifications summarize what needs attention: downloaded updates. Selecting a notification opens Activity — a timeline of incoming updates only — where updates are reviewed and applied one by one, queued for the next build, or handled all at once with Update all."},
+        {target:null, title:"6 · How RPO gating works", body:"A gated file ships with a sidecar .rpo file holding one condition — for example, assets/minecraft/textures/gui/widgets.png.rpo contains { \"condition\": \"darkmode:darkMode\" }. At merge time the condition is checked against the values on the RPO Toggles page: files whose condition is false are left out of the output, and the sidecar is removed. Smart-merged packs keep their conditions intact, and when two configs define the same entry name, namespacing keeps them independent."},
+        {target:".side", title:"7 · Additional tools", body:"Use the sidebar to access Conflicts, RPO Toggles, Discover for Modrinth search with category, pack type, and version filters, and Activity. Every screen is one click away in the sidebar. The card at the bottom of the sidebar is Packmerge checking for updates to itself — separate from the pack updates in Activity."}
+      ];
+      var tourIndex=0, tourActive=false;
+      function tourTargetEl(step){
+        if(!step || !step.target) return null;
+        return document.querySelector(step.target);
+      }
+      function positionTour(){
+        if(!tourActive) return;
+        var step=tourSteps[tourIndex];
+        var target=tourTargetEl(step);
+        var hl=el("tourHighlight"), card=el("tourCard");
+        if(!target){
+          hl.style.display="none";
+          card.style.left="50%"; card.style.top="50%"; card.style.transform="translate(-50%,-50%)";
+          return;
+        }
+        card.style.transform="none";
+        var r=target.getBoundingClientRect();
+        var pad=6;
+        hl.style.display="block";
+        hl.style.left=Math.max(4,r.left-pad)+"px";
+        hl.style.top=Math.max(4,r.top-pad)+"px";
+        hl.style.width=Math.max(24,r.width+pad*2)+"px";
+        hl.style.height=Math.max(24,r.height+pad*2)+"px";
+        var cw=Math.min(window.innerWidth*0.92,368);
+        var ch=card.offsetHeight||220;
+        var left=Math.min(Math.max(12,r.left), window.innerWidth-cw-12);
+        var topBelow=r.bottom+pad+14;
+        var top=topBelow+ch<=window.innerHeight-12 ? topBelow : Math.max(12, r.top-pad-14-ch);
+        if(topBelow+ch>window.innerHeight-12 && r.top-pad-14-ch<12){
+          top=Math.max(12, window.innerHeight-ch-12);
+          left=Math.min(Math.max(12, window.innerWidth-cw-12), Math.max(12, r.right+14));
+          if(left+cw>window.innerWidth-12) left=Math.max(12,(window.innerWidth-cw)/2);
+        }
+        card.style.left=left+"px"; card.style.top=top+"px";
+      }
+      function renderTourStep(){
+        var step=tourSteps[tourIndex];
+        el("tourStepLabel").textContent="Step "+(tourIndex+1)+" of "+tourSteps.length;
+        el("tourTitle").textContent=step.title;
+        el("tourBody").textContent=step.body;
+        el("tourDots").innerHTML=tourSteps.map(function(_,i){return '<span class="'+(i===tourIndex?"on":"")+'"></span>'}).join("");
+        el("tourBack").disabled=tourIndex===0;
+        el("tourNext").textContent=tourIndex===tourSteps.length-1?"Finish":"Next";
+        var target=tourTargetEl(step);
+        if(target){ target.scrollIntoView({block:"center",behavior:"smooth"}); setTimeout(positionTour,280); }
+        else { positionTour(); }
+        setTimeout(positionTour,40);
+      }
+      function startTour(){
+        showView("workbench");
+        tourIndex=0; tourActive=true;
+        el("tourScrim").classList.add("on");
+        el("tourScrim").setAttribute("aria-hidden","false");
+        renderTourStep();
+      }
+      function endTour(){
+        tourActive=false;
+        el("tourScrim").classList.remove("on");
+        el("tourScrim").setAttribute("aria-hidden","true");
+      }
+      el("tourBtn").addEventListener("click",startTour);
+      el("tourSkip").addEventListener("click",endTour);
+      el("tourBack").addEventListener("click",function(){ if(tourIndex>0){tourIndex--; renderTourStep();} });
+      el("tourNext").addEventListener("click",function(){ if(tourIndex>=tourSteps.length-1){endTour(); toast("Tour complete.");} else {tourIndex++; renderTourStep();} });
+      el("tourScrim").addEventListener("click",function(e){ if(e.target===el("tourScrim")){ /* keep tour open on backdrop click; use Skip to exit */ } });
+      window.addEventListener("resize",positionTour);
+      window.addEventListener("scroll",positionTour,true);
+      document.addEventListener("keydown",function(e){ if(tourActive && e.key==="Escape"){endTour();} if(tourActive && e.key==="ArrowRight"){el("tourNext").click();} if(tourActive && e.key==="ArrowLeft"){el("tourBack").click();} });
+
+      /* ================= init ================= */
+      renderSources(); renderUpdates(); renderToggles(); renderDiscover(""); syncSubBadge();
+      paintAll(document);
+    </script>
+  <script>
+/* ============ Workbench slice 1: real data layer ============
+   Runs after the demo script and re-wires ONLY the Workbench tab
+   to the real server endpoints. Conflicts, RPO Toggles, Discover,
+   and Activity keep their demo behavior.
+   Demo globals reused: el, toast, sources, srcRow, paintAll,
+   openInspector, showView. The demo renderSources is replaced by
+   renderSourcesReal below. */
+(function(){
+  "use strict";
+  function wbApi(method, path, body){
+    return fetch(path, {
+      method: method,
+      headers: {"Content-Type": "application/json"},
+      body: body === undefined ? undefined : JSON.stringify(body)
+    }).then(function(r){
+      return r.json().then(function(j){
+        if(!r.ok) throw new Error((j && j.error) || ("request failed: " + path));
+        return j;
+      });
+    });
+  }
+  function fmtSize(n){
+    if(n == null) return "—";
+    if(n < 1024) return n + " B";
+    if(n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
+    return (n / 1024 / 1024).toFixed(1) + " MB";
+  }
+  function fmtTime(iso){
+    try{
+      var d = new Date(iso);
+      var today = new Date();
+      var day = (d.toDateString() === today.toDateString()) ? "Today"
+        : d.toLocaleDateString([], {month: "short", day: "numeric"});
+      return day + ", " + d.toLocaleTimeString([], {hour: "numeric", minute: "2-digit"});
+    }catch(e){ return iso; }
+  }
+  function mapRow(v){
+    var isRP = v.pack_type !== "datapack";
+    var kind = v.kind === "modrinth" ? "Modrinth" : v.kind === "url" ? "URL" : "Local file";
+    var note;
+    if(v.kind === "modrinth") note = "Modrinth · update checks on";
+    else note = v.ref || "";
+    if(v.pack_type === "unknown") note += (note ? " · " : "") + "type detected on first build";
+    return {
+      id: "wb" + v.index, _real: true, _index: v.index,
+      name: v.name, type: isRP ? "RP" : "DP", kind: kind,
+      files: (v.files != null ? v.files.toLocaleString("en-US") + " files" : "—"),
+      ver: v.version || "—", on: v.enabled,
+      seed: "wb" + v.index, note: note,
+      sub: v.kind === "modrinth", rpo: 0, update: false, queued: false
+    };
+  }
+
+  /* ---------- sources list (real render) ---------- */
+  var wbDragId = null;
+  function renderSourcesReal(){
+    // Demo rows pushed by demo tabs (e.g. demo Discover subscribe)
+    // are not real sources and must not appear in the real list.
+    for(var i = sources.length - 1; i >= 0; i--){
+      if(!sources[i]._real) sources.splice(i, 1);
+    }
+    var real = sources.filter(function(s){ return s._real; });
+    var inc = el("srcIncludedVal");
+    if(inc){
+      var onN = real.filter(function(s){ return s.on; }).length;
+      inc.textContent = onN + " of " + real.length +
+        (real.length - onN ? " · " + (real.length - onN) + " disabled" : "");
+    }
+    var wrap = el("sourceList");
+    if(!wrap) return;
+    wrap.innerHTML = "";
+    if(!real.length){
+      wrap.innerHTML = '<div class="empty">No packs yet — add one below.</div>';
+      return;
+    }
+    [["RP", "Resource packs"], ["DP", "Data packs"]].forEach(function(g){
+      var list = real.filter(function(s){ return s.type === g[0]; });
+      if(!list.length) return;
+      var head = document.createElement("div"); head.className = "grouphead";
+      head.innerHTML = '<span>' + g[1] + '</span><span class="gcount">' +
+        list.filter(function(s){ return s.on; }).length + ' of ' + list.length +
+        ' in the merge</span><span class="line"></span>';
+      wrap.appendChild(head);
+      list.forEach(function(s){ wrap.appendChild(srcRow(s, s._index)); });
+    });
+    paintAll(wrap);
+    wrap.querySelectorAll("input[data-src]").forEach(function(cb){
+      cb.addEventListener("change", function(){
+        var s = sources.filter(function(x){ return x.id === cb.getAttribute("data-src"); })[0];
+        if(!s) return;
+        var want = cb.checked;
+        wbApi("POST", "/api/wb/sources/" + s._index + "/enabled", {enabled: want})
+          .then(refresh)
+          .catch(function(e){ toast("Couldn't change that source: " + e.message); refresh(); });
+      });
+    });
+    wrap.querySelectorAll("[data-inspect]").forEach(function(b){
+      b.addEventListener("click", function(){ openInspector(b.getAttribute("data-inspect")); });
+    });
+    wrap.querySelectorAll(".src").forEach(function(rowEl){
+      var grip = rowEl.querySelector(".grip");
+      if(grip){
+        grip.addEventListener("mousedown", function(){ rowEl.draggable = true; });
+        grip.addEventListener("mouseup", function(){ rowEl.draggable = false; });
+      }
+      rowEl.addEventListener("dragstart", function(e){
+        wbDragId = rowEl.getAttribute("data-sid");
+        if(e.dataTransfer){
+          e.dataTransfer.effectAllowed = "move";
+          try{ e.dataTransfer.setData("text/plain", wbDragId); }catch(err){}
+        }
+        rowEl.classList.add("dragging");
+      });
+      rowEl.addEventListener("dragend", function(){
+        rowEl.classList.remove("dragging"); rowEl.draggable = false; wbDragId = null;
+      });
+      rowEl.addEventListener("dragover", function(e){
+        if(!wbDragId) return;
+        var drag = sources.filter(function(x){ return x.id === wbDragId; })[0];
+        var target = sources.filter(function(x){ return x.id === rowEl.getAttribute("data-sid"); })[0];
+        if(!drag || !target || drag === target || drag.type !== target.type) return;
+        e.preventDefault();
+        if(e.dataTransfer) e.dataTransfer.dropEffect = "move";
+      });
+      rowEl.addEventListener("drop", function(e){
+        if(!wbDragId) return;
+        e.preventDefault();
+        var targetId = rowEl.getAttribute("data-sid");
+        var from = sources.findIndex(function(x){ return x.id === wbDragId; });
+        var to = sources.findIndex(function(x){ return x.id === targetId; });
+        if(from < 0 || to < 0 || from === to){ wbDragId = null; return; }
+        var rect = rowEl.getBoundingClientRect();
+        var after = (e.clientY - rect.top) > rect.height / 2;
+        var item = sources.splice(from, 1)[0];
+        var insertAt = sources.findIndex(function(x){ return x.id === targetId; }) + (after ? 1 : 0);
+        sources.splice(insertAt, 0, item);
+        wbDragId = null;
+        var order = sources.filter(function(s){ return s._real; }).map(function(s){ return s._index; });
+        wbApi("POST", "/api/wb/sources/reorder", {order: order})
+          .then(refresh)
+          .catch(function(err){ toast("Couldn't reorder: " + err.message); refresh(); });
+      });
+    });
+  }
+  window.renderSources = renderSourcesReal;
+
+  /* ---------- state refresh ---------- */
+  function refresh(){
+    return wbApi("GET", "/api/wb/state").then(function(v){
+      var rows = v.sources.map(mapRow);
+      sources.length = 0;
+      rows.forEach(function(r){ sources.push(r); });
+      renderSourcesReal();
+      var pn = el("packName"), pd = el("packDesc");
+      if(pn && document.activeElement !== pn) pn.value = v.pack_name || "";
+      if(pd && document.activeElement !== pd) pd.value = v.description || "";
+      if(el("packFileName")) el("packFileName").textContent = v.output_filename;
+      var est = null;
+      document.querySelectorAll("#buildCard .outrow").forEach(function(r){
+        var k = r.querySelector(".k");
+        if(k && k.textContent.trim() === "Estimated output") est = r.querySelector(".v");
+      });
+      if(est) est.textContent = v.last_output_size != null ? fmtSize(v.last_output_size) : "—";
+      if(el("lastBuild")) el("lastBuild").textContent = v.last_build ? fmtTime(v.last_build) : "Never";
+      var qr = el("queuedRow");
+      if(qr) qr.style.display = v.queue_count ? "" : "none";
+      if(v.queue_count && el("queuedVal")) el("queuedVal").textContent = v.queue_count + " queued — merge on next build";
+      return v;
+    });
+  }
+
+  /* ---------- pack name / description (debounced save) ---------- */
+  var wbSaveT = null;
+  function saveMeta(){
+    clearTimeout(wbSaveT);
+    wbSaveT = setTimeout(function(){
+      wbApi("POST", "/api/wb/state", {
+        pack_name: el("packName").value.trim(),
+        description: el("packDesc").value.trim()
+      }).then(function(v){
+        if(el("packFileName")) el("packFileName").textContent = v.output_filename;
+      }).catch(function(){});
+    }, 400);
+  }
+  if(el("packName")) el("packName").addEventListener("input", saveMeta);
+  if(el("packDesc")) el("packDesc").addEventListener("input", saveMeta);
+
+  /* ---------- build / check ---------- */
+  var wbBuilding = false, wbPollT = null, wbSeenLog = 0;
+  function realBuild(mode){
+    if(wbBuilding) return;
+    wbBuilding = true;
+    var btn = el("buildBtn"), bar = el("buildBar"), prog = el("buildProgress"),
+        logEl = el("buildLog"), chk = el("checkBtn");
+    btn.disabled = true; if(chk) chk.disabled = true;
+    prog.classList.add("on");
+    logEl.textContent = "";
+    wbApi("POST", "/api/wb/state", {
+      pack_name: el("packName").value.trim(),
+      description: el("packDesc").value.trim()
+    }).then(function(){
+      return wbApi("POST", "/api/wb/run", {mode: mode});
+    }).then(function(){
+      wbSeenLog = 0;
+      clearInterval(wbPollT);
+      wbPollT = setInterval(pollLog, 400);
+      pollLog();
+    }).catch(function(e){
+      toast(e.message);
+      wbBuilding = false; btn.disabled = false; if(chk) chk.disabled = false;
+      prog.classList.remove("on");
+    });
+    function pollLog(){
+      wbApi("GET", "/api/log").then(function(d){
+        if(d.lines.length > wbSeenLog){
+          logEl.textContent += d.lines.slice(wbSeenLog).join("");
+          logEl.scrollTop = logEl.scrollHeight;
+          wbSeenLog = d.lines.length;
+        }
+        if(d.done){
+          clearInterval(wbPollT);
+          wbBuilding = false; btn.disabled = false; if(chk) chk.disabled = false;
+          prog.classList.remove("on");
+          if(bar) bar.style.width = "100%";
+          refresh().then(function(){
+            toast(d.rc === 0
+              ? (mode === "check" ? "Check complete — see the log." : "Build complete. Output saved to the Downloads folder.")
+              : "Build failed — see the log.");
+          });
+        }
+      }).catch(function(){});
+    }
+  }
+
+  /* ---------- button rewiring (clone strips demo listeners) ---------- */
+  function rewire(id, fn){
+    var b = el(id);
+    if(!b) return null;
+    var c = b.cloneNode(true);
+    b.parentNode.replaceChild(c, b);
+    c.addEventListener("click", fn);
+    return c;
+  }
+  rewire("buildBtn", function(){ realBuild("build"); });
+  rewire("checkBtn", function(){ realBuild("check"); });
+
+  /* ---------- confirm modal (mockup .scrim/.dialog classes) ---------- */
+  function openWbConfirm(title, message, okLabel, onOk){
+    var scrim = document.createElement("div");
+    scrim.className = "scrim on";
+    scrim.setAttribute("role", "dialog"); scrim.setAttribute("aria-modal", "true");
+    scrim.innerHTML = '<div class="dialog"><h3></h3><p class="sub"></p>' +
+      '<div class="foot"><button class="btn ghost">Cancel</button>' +
+      '<button class="btn accent"></button></div></div>';
+    scrim.querySelector("h3").textContent = title;
+    scrim.querySelector(".sub").textContent = message;
+    var btns = scrim.querySelectorAll(".foot button");
+    btns[0].addEventListener("click", function(){ scrim.remove(); });
+    btns[1].textContent = okLabel;
+    btns[1].addEventListener("click", function(){ scrim.remove(); onOk(); });
+    scrim.addEventListener("mousedown", function(e){ if(e.target === scrim) scrim.remove(); });
+    document.body.appendChild(scrim);
+  }
+  rewire("clearBtn", function(){
+    if(!sources.filter(function(s){ return s._real; }).length) return;
+    openWbConfirm("Clear all sources?",
+      "Remove all sources from the list? Your per-file overrides and excluded paths are kept.",
+      "Clear all",
+      function(){
+        wbApi("DELETE", "/api/wb/sources").then(refresh)
+          .catch(function(e){ toast(e.message); });
+      });
+  });
+
+  /* ---------- Add URL: reuse the demo modal markup, own submit ---------- */
+  var urlForm = el("addUrlForm");
+  if(urlForm){
+    var f2 = urlForm.cloneNode(true);
+    urlForm.parentNode.replaceChild(f2, urlForm);
+    f2.addEventListener("submit", function(e){
+      e.preventDefault();
+      var input = el("addUrlInput"), err = el("addUrlErr"), btn = el("addUrlSubmit");
+      var raw = input.value.trim();
+      err.style.display = "none";
+      if(!raw){
+        err.textContent = "Paste a link first.";
+        err.style.display = "block"; input.focus(); return;
+      }
+      if(btn) btn.disabled = true;
+      wbApi("POST", "/api/wb/sources", {url: raw}).then(function(){
+        el("addUrlScrim").classList.remove("on");
+        input.value = "";
+        return refresh();
+      }).then(function(){
+        toast("Source added — it merges on the next build.");
+      }).catch(function(e){
+        err.textContent = e.message; err.style.display = "block"; input.focus();
+      }).then(function(){ if(btn) btn.disabled = false; });
+    });
+    el("addUrlCancel").addEventListener("click", function(){
+      el("addUrlScrim").classList.remove("on");
+    });
+  }
+  rewire("addUrlBtn", function(){
+    var input = el("addUrlInput"), err = el("addUrlErr");
+    if(input) input.value = "";
+    if(err) err.style.display = "none";
+    el("addUrlScrim").classList.add("on");
+    setTimeout(function(){ if(input) input.focus(); }, 30);
+  });
+
+  /* ---------- Add local file: server-side browser (real paths) ----------
+     The browser file picker cannot hand the server a path, so local
+     sources are picked through the server's own browser, exactly like
+     the 1.x page. */
+  function openWbBrowser(){
+    var scrim = document.createElement("div");
+    scrim.className = "scrim on";
+    scrim.setAttribute("role", "dialog"); scrim.setAttribute("aria-modal", "true");
+    scrim.innerHTML = '<div class="dialog"><h3>Choose a resource pack</h3>' +
+      '<p class="sub" id="wbCrumb"></p>' +
+      '<div id="wbBrowseList" style="max-height:300px;overflow:auto"></div>' +
+      '<div class="foot"><button class="btn ghost" id="wbBrowseCancel">Cancel</button></div></div>';
+    document.body.appendChild(scrim);
+    function close(){ scrim.remove(); }
+    scrim.addEventListener("mousedown", function(e){ if(e.target === scrim) close(); });
+    scrim.querySelector("#wbBrowseCancel").addEventListener("click", close);
+    function browRow(text, fn){
+      var d = document.createElement("div");
+      d.textContent = text;
+      d.style.cssText = "padding:9px 12px;cursor:pointer;border-bottom:1px solid var(--border)";
+      d.addEventListener("click", fn);
+      return d;
+    }
+    function go(path){
+      wbApi("GET", "/api/browse?path=" + encodeURIComponent(path || "")).then(function(d){
+        scrim.querySelector("#wbCrumb").textContent = d.path;
+        var list = scrim.querySelector("#wbBrowseList");
+        list.innerHTML = "";
+        if(d.parent) list.appendChild(browRow("↑ Up", function(){ go(d.parent); }));
+        d.dirs.forEach(function(n){
+          list.appendChild(browRow(n + "/", function(){ go(d.path + "/" + n); }));
+        });
+        if(!d.zips.length && !d.dirs.length){
+          var em = document.createElement("div");
+          em.textContent = "No zip files here.";
+          em.style.cssText = "padding:18px;text-align:center;color:var(--dim)";
+          list.appendChild(em);
+        }
+        d.zips.forEach(function(n){
+          list.appendChild(browRow(n, function(){
+            wbApi("GET", "/api/normalize-path?path=" + encodeURIComponent(d.path + "/" + n))
+              .then(function(np){ return wbApi("POST", "/api/wb/sources", {path: np.path}); })
+              .then(function(){ close(); return refresh(); })
+              .then(function(){ toast("Source added — it merges on the next build."); })
+              .catch(function(e){ toast(e.message); });
+          }));
+        });
+      }).catch(function(e){ toast("Couldn't browse: " + e.message); });
+    }
+    go("");
+  }
+  rewire("addLocalBtn", openWbBrowser);
+
+  /* ---------- output folder Browse buttons (both cards) ---------- */
+  document.querySelectorAll("[data-browse-output]").forEach(function(b){
+    var c = b.cloneNode(true);
+    b.parentNode.replaceChild(c, b);
+    c.addEventListener("click", function(){
+      wbApi("GET", "/api/wb/open-output").catch(function(){});
+    });
+  });
+
+  /* ---------- honesty guards for demo-only controls ---------- */
+  // Ctrl+Enter is bound by the demo to its simulated build. Capture it
+  // first and run the real build instead.
+  document.addEventListener("keydown", function(e){
+    if((e.ctrlKey || e.metaKey) && e.key === "Enter"){
+      e.stopImmediatePropagation();
+      e.preventDefault();
+      showView("workbench");
+      realBuild("build");
+    }
+  }, true);
+  // Watch mode is not wired in this slice: intercept the Workbench
+  // toggle so it cannot claim Auto Rebuild is on.
+  var ww = el("watchWrap");
+  if(ww){
+    ww.addEventListener("change", function(e){
+      var t = el("watchToggle");
+      if(t) t.checked = !t.checked;
+      e.stopImmediatePropagation();
+      toast("Watch mode isn't wired in this slice yet — it arrives in a later slice.");
+    }, true);
+  }
+
+  /* ---------- init ---------- */
+  var sl = el("sourceList");
+  if(sl) sl.innerHTML = '<div class="empty">Loading sources…</div>';
+  refresh().catch(function(){
+    if(sl) sl.innerHTML = '<div class="empty">Couldn\'t load sources — is the server running?</div>';
+  });
+})();
+
+</script>
+</body>
+</html>

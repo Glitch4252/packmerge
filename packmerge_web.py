@@ -14,11 +14,15 @@ reach it from other devices on your network (e.g. your phone on WiFi).
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
 import urllib.parse
+import urllib.request
 import webbrowser
+import zipfile
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -83,7 +87,7 @@ def _append_log_line(line):
         pass
 
 
-def start_run(mode):
+def start_run(mode, manifest_path=None, after=None):
     with run_lock:
         if run_info["running"]:
             return False
@@ -93,12 +97,14 @@ def start_run(mode):
         open(LAST_LOG_PATH, "w").close()
     except OSError:
         pass
-    threading.Thread(target=_run_worker, args=(mode,), daemon=True).start()
+    threading.Thread(target=_run_worker,
+                     args=(mode, manifest_path or STATE_PATH, after),
+                     daemon=True).start()
     return True
 
 
-def _run_worker(mode):
-    cmd = [sys.executable, PACKMERGE_PY, "-m", STATE_PATH]
+def _run_worker(mode, manifest_path, after=None):
+    cmd = [sys.executable, PACKMERGE_PY, "-m", manifest_path]
     if mode == "check":
         cmd.append("--check")
     lines = []
@@ -116,6 +122,13 @@ def _run_worker(mode):
         msg = f"[packmerge] failed to start: {e}\n"
         lines.append(msg)
         _append_log_line(msg)
+    if after is not None:
+        # run before marking done, so a client polling /api/log never
+        # sees done=True while the post-build sync is still in flight
+        try:
+            after(rc)
+        except Exception as e:
+            _append_log_line(f"[packmerge-web] workbench sync failed: {e}\n")
     with run_lock:
         run_info.update(running=False, done=True, rc=rc)
 
@@ -168,6 +181,350 @@ def open_output_folder():
         return {"ok": True}
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+
+# ------------------------------------------------------------ workbench (2.0 slice 1)
+# The 2.0 Workbench tab (served at /workbench) runs on these real
+# endpoints. The 1.x page above is untouched; this section only adds
+# new routes. Slice 1 covers sources + build. Conflicts, RPO Toggles,
+# Discover, and Activity stay demo in the workbench page and are not
+# wired here.
+#
+# State: the workbench shares packmerge-gui-state.json with 1.x and
+# only ADDS fields to it, so 1.x keeps working:
+#   - per-source "enabled" (default true) and "pack_type"
+#     ("resourcepack" / "datapack" / "unknown")
+#   - per-source "files" (file count, when known) and "version"
+#     (Modrinth version number, when known)
+#   - "wb_last_build" (ISO timestamp) and "wb_last_output_size" (bytes)
+# "enabled" is a workbench-level concept: the 1.x page ignores it and
+# builds all sources, exactly as before.
+
+WB_BUILD_MANIFEST = os.path.join(HERE, "packmerge-workbench-build.json")
+
+
+def wb_downloads_dir():
+    return os.path.join(os.path.expanduser("~"), "Downloads")
+
+
+def wb_output_filename(pack_name):
+    name = (pack_name or "").strip() or "packmerge"
+    name = re.sub(r'[\\/:*?"<>|]', "-", name).strip() or "packmerge"
+    return name + ".zip"
+
+
+def wb_output_path(pack_name):
+    return os.path.join(wb_downloads_dir(), wb_output_filename(pack_name))
+
+
+def wb_open_output():
+    folder = wb_downloads_dir()
+    try:
+        if sys.platform.startswith("win"):
+            os.startfile(folder)
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", folder])
+        else:
+            subprocess.Popen(["xdg-open", folder])
+        return {"ok": True}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def wb_modrinth_slug(value):
+    """Modrinth project slug from a full URL or a bare slug, else None."""
+    v = (value or "").strip()
+    m = re.match(r"https?://(?:www\.)?modrinth\.com/"
+                 r"(?:resourcepack|datapack|mod|plugin)/([A-Za-z0-9_-]+)", v)
+    if m:
+        return m.group(1)
+    if re.fullmatch(r"[A-Za-z0-9_-]+", v):
+        return v
+    return None
+
+
+def wb_modrinth_project(slug):
+    req = urllib.request.Request(
+        MODRINTH_API + "/project/" + urllib.parse.quote(slug),
+        headers={"User-Agent": "packmerge-workbench/2.0"})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        return json.loads(r.read().decode("utf-8"))
+
+
+def wb_inspect_zip(path):
+    """Return (file_count, pack_type) for a zip, or (None, 'unknown').
+
+    Pack type comes from the zip's own folders: assets/ means a
+    resource pack, data/ means a data pack. A pack with both is
+    grouped as a resource pack (the engine merges both sides either
+    way); a pack with neither is "unknown" until a build says more.
+    """
+    try:
+        with zipfile.ZipFile(path) as z:
+            names = z.namelist()
+    except Exception:
+        return None, "unknown"
+    files = [n for n in names if not n.endswith("/")]
+    segments = set()
+    for n in names:
+        segments.update(n.split("/"))
+    has_assets = "assets" in segments
+    has_data = "data" in segments
+    if has_assets:
+        ptype = "resourcepack"
+    elif has_data:
+        ptype = "datapack"
+    else:
+        ptype = "unknown"
+    return len(files), ptype
+
+
+def wb_source_view(i, s):
+    if "modrinth" in s:
+        kind = "modrinth"
+    elif "url" in s:
+        kind = "url"
+    else:
+        kind = "path"
+    return {
+        "index": i,
+        "name": s.get("name") or ("source-%d" % i),
+        "kind": kind,
+        "pack_type": s.get("pack_type", "unknown"),
+        "enabled": s.get("enabled", True),
+        "files": s.get("files"),
+        "version": s.get("version"),
+        "ref": s.get("modrinth") or s.get("url") or s.get("path"),
+    }
+
+
+def wb_state_view():
+    st = load_state()
+    srcs = st.get("sources", [])
+    enabled = [s for s in srcs if s.get("enabled", True)]
+    return {
+        "pack_name": st.get("pack_name", ""),
+        "description": st.get("description", ""),
+        "output_filename": wb_output_filename(st.get("pack_name", "")),
+        "output_folder": wb_downloads_dir(),
+        "sources": [wb_source_view(i, s) for i, s in enumerate(srcs)],
+        "included": len(enabled),
+        "total": len(srcs),
+        # Slice 1 has no update/RPO queue yet; the field exists so the
+        # Build card can count it once later slices wire it.
+        "queue_count": 0,
+        "last_build": st.get("wb_last_build"),
+        "last_output_size": st.get("wb_last_output_size"),
+    }
+
+
+def wb_add_url(url):
+    """Validate + resolve a URL add. Returns (source_dict, error).
+
+    Pack type is never asked for: Modrinth links resolve it from the
+    project's type, direct .zip links start as "unknown" and get their
+    real type from the downloaded file after the first build.
+    """
+    url = (url or "").strip()
+    if not url:
+        return None, "Paste a link first."
+    slug = wb_modrinth_slug(url)
+    if slug is not None:
+        try:
+            proj = wb_modrinth_project(slug)
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                return None, "No Modrinth project found for that link."
+            return None, "Could not reach Modrinth (HTTP %s)." % e.code
+        except Exception as e:
+            return None, "Could not reach Modrinth (%s)." % e
+        ptype = proj.get("project_type", "")
+        if ptype not in ("resourcepack", "datapack"):
+            return None, ("That Modrinth project is a %s, not a resource "
+                           "or data pack." % (ptype or "project"))
+        return {"name": proj.get("title") or slug, "modrinth": url,
+                "pack_type": ptype}, None
+    if not re.match(r"https?://", url):
+        return None, ("That doesn't look like a link. Paste a Modrinth "
+                       "project link or a direct .zip link.")
+    path_part = urllib.parse.urlparse(url).path
+    if not path_part.lower().endswith(".zip"):
+        return None, "That link doesn't point to a .zip file."
+    fname = urllib.parse.unquote(
+        path_part.rstrip("/").split("/")[-1])[:-4]
+    name = re.sub(r"[-_]+", " ", fname).strip() or "Downloaded pack"
+    return {"name": name, "url": url, "pack_type": "unknown"}, None
+
+
+def wb_add_path(path):
+    """Validate + describe a local path add. Returns (source_dict, error)."""
+    raw = (path or "").strip()
+    if not raw:
+        return None, "No file selected."
+    p = raw if os.path.isabs(raw) else os.path.join(
+        HERE, os.path.expanduser(raw))
+    if not os.path.isfile(p):
+        return None, "Local file not found: %s" % p
+    if not p.lower().endswith(".zip"):
+        return None, "Local sources must be .zip files."
+    count, ptype = wb_inspect_zip(p)
+    if count is None:
+        return None, "That file is not a valid zip file."
+    stem = os.path.basename(p)[:-4]
+    return {"name": stem, "path": normalize_path(p),
+            "pack_type": ptype, "files": count}, None
+
+
+def wb_build_manifest():
+    """The manifest the engine runs for a workbench build.
+
+    Only enabled sources reach the engine, and only engine-known keys
+    are passed (workbench-only keys like "enabled" are stripped).
+    Output is an absolute path in the Downloads folder, matching the
+    Build card's promise.
+    """
+    st = load_state()
+    enabled = [s for s in st.get("sources", []) if s.get("enabled", True)]
+    clean = []
+    for s in enabled:
+        clean.append({k: s[k] for k in ("name", "modrinth", "url", "path")
+                      if k in s})
+    return {
+        "mc_version": st.get("mc_version", "latest"),
+        "pack_name": st.get("pack_name", "") or "packmerge",
+        "description": st.get("description", ""),
+        "output": wb_output_path(st.get("pack_name", "")),
+        "smart_json_merge": st.get("smart_json_merge", True),
+        "merge_respackopts": st.get("merge_respackopts", True),
+        "sources": clean,
+        "overrides": st.get("overrides", {}),
+        "exclude": st.get("exclude", []),
+    }, enabled
+
+
+def wb_lock_by_name(lock):
+    by_name = {}
+    for key, val in lock.items():
+        _i, _, name = key.partition(":")
+        by_name.setdefault(name, val)
+    return by_name
+
+
+def wb_prepare_build():
+    """Write the filtered build manifest + translated lock.
+
+    The engine keys its lock by "index:name", so filtering disabled
+    sources out would shift every index and break Modrinth update
+    tracking. The lock is therefore translated by name: temp indices
+    for the run, original indices when writing back.
+    Returns (enabled_sources, orig_index_by_name, temp_index_by_orig).
+    """
+    manifest, enabled = wb_build_manifest()
+    with open(WB_BUILD_MANIFEST, "w") as f:
+        json.dump(manifest, f, indent=2)
+    real_lock = {}
+    try:
+        with open(STATE_PATH + ".lock.json") as f:
+            real_lock = json.load(f)
+    except Exception:
+        pass
+    by_name = wb_lock_by_name(real_lock)
+    temp_lock = {}
+    for ti, s in enumerate(enabled):
+        name = s.get("name", "source-%d" % ti)
+        if name in by_name:
+            temp_lock["%d:%s" % (ti, name)] = by_name[name]
+    with open(WB_BUILD_MANIFEST + ".lock.json", "w") as f:
+        json.dump(temp_lock, f, indent=2)
+    st = load_state()
+    orig_index = {}
+    for i, s in enumerate(st.get("sources", [])):
+        orig_index.setdefault(s.get("name", "source-%d" % i), i)
+    temp_index = {}
+    for ti, s in enumerate(enabled):
+        oi = orig_index.get(s.get("name", "source-%d" % ti))
+        if oi is not None:
+            temp_index[oi] = ti
+    return enabled, orig_index, temp_index
+
+
+def wb_after_build(rc, mode, orig_index, temp_index):
+    """Sync engine results back into the shared state (builds only
+    update last-build info; failed runs change nothing)."""
+    if rc != 0:
+        return
+    try:
+        with open(WB_BUILD_MANIFEST + ".lock.json") as f:
+            temp_lock = json.load(f)
+    except Exception:
+        temp_lock = {}
+    real_lock = {}
+    try:
+        with open(STATE_PATH + ".lock.json") as f:
+            real_lock = json.load(f)
+    except Exception:
+        pass
+    by_name = wb_lock_by_name(temp_lock)
+    for name, val in by_name.items():
+        if name in orig_index:
+            real_lock["%d:%s" % (orig_index[name], name)] = val
+    try:
+        with open(STATE_PATH + ".lock.json", "w") as f:
+            json.dump(real_lock, f, indent=2)
+    except OSError:
+        pass
+    st = load_state()
+    cache_dir = os.path.join(HERE, ".packmerge-cache")
+    for i, s in enumerate(st.get("sources", [])):
+        name = s.get("name", "source-%d" % i)
+        if "modrinth" in s and name in by_name:
+            if by_name[name].get("version_number"):
+                s["version"] = by_name[name]["version_number"]
+        if "path" in s:
+            p = s["path"] if os.path.isabs(s["path"]) else os.path.join(
+                HERE, os.path.expanduser(s["path"]))
+            count, ptype = wb_inspect_zip(p)
+            if count is not None:
+                s["files"] = count
+                if s.get("pack_type") in (None, "unknown"):
+                    s["pack_type"] = ptype
+        elif s.get("enabled", True) and i in temp_index:
+            # engine cache files are named "<temp index>-<filename>"
+            ti = temp_index[i]
+            try:
+                cands = sorted(fn for fn in os.listdir(cache_dir)
+                               if fn.startswith("%d-" % ti))
+            except OSError:
+                cands = []
+            if cands:
+                count, ptype = wb_inspect_zip(
+                    os.path.join(cache_dir, cands[0]))
+                if count is not None:
+                    s["files"] = count
+                    if s.get("pack_type") in (None, "unknown"):
+                        s["pack_type"] = ptype
+    if mode == "build":
+        out_path = wb_output_path(st.get("pack_name", ""))
+        if os.path.exists(out_path):
+            st["wb_last_build"] = datetime.now(timezone.utc).isoformat()
+            st["wb_last_output_size"] = os.path.getsize(out_path)
+    save_state(st)
+
+
+def wb_start_run(mode):
+    st = load_state()
+    enabled = [s for s in st.get("sources", []) if s.get("enabled", True)]
+    if not enabled:
+        return False, "Add at least one enabled pack first."
+    _enabled, orig_index, temp_index = wb_prepare_build()
+
+    def after(rc):
+        wb_after_build(rc, mode, orig_index, temp_index)
+
+    ok = start_run(mode, manifest_path=WB_BUILD_MANIFEST, after=after)
+    if not ok:
+        return False, "A build is already running."
+    return True, None
 
 
 # ---------------------------------------------------------------- server
@@ -230,11 +587,27 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _wb_html(self):
+        path = os.path.join(HERE, "packmerge_workbench.html")
+        try:
+            with open(path, "rb") as f:
+                body = f.read()
+        except OSError:
+            self.send_error(404)
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
         qs = urllib.parse.parse_qs(parsed.query)
         if parsed.path == "/":
             return self._html()
+        if parsed.path == "/workbench":
+            return self._wb_html()
         if parsed.path in ("/icon.png", "/favicon.ico"):
             return self._icon()
         if parsed.path == "/custom.css":
@@ -243,6 +616,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._custom("custom.js", "text/javascript; charset=utf-8")
         if parsed.path == "/api/state":
             return self._json(load_state())
+        if parsed.path == "/api/wb/state":
+            return self._json(wb_state_view())
+        if parsed.path == "/api/wb/open-output":
+            return self._json(wb_open_output())
         if parsed.path == "/api/log":
             with run_lock:
                 return self._json({
@@ -278,6 +655,130 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": ok})
         if parsed.path == "/api/app-update":
             return self._app_update(body)
+        if parsed.path == "/api/wb/state":
+            try:
+                payload = json.loads(body)
+            except Exception:
+                return self._json({"ok": False, "error": "invalid JSON"}, 400)
+            if not isinstance(payload, dict):
+                return self._json({"ok": False, "error": "invalid JSON"}, 400)
+            st = load_state()
+            if "pack_name" in payload:
+                st["pack_name"] = str(payload["pack_name"])[:200]
+            if "description" in payload:
+                st["description"] = str(payload["description"])[:1000]
+            if not st.get("output"):
+                # Keep the shared state valid for the 1.x page: the
+                # engine treats an empty output as "the app folder
+                # itself" and crashes replacing it. Mirror 1.x's
+                # auto-output (name + ".zip"). A deliberately set 1.x
+                # output is never overwritten.
+                st["output"] = wb_output_filename(st.get("pack_name", ""))
+            save_state(st)
+            return self._json(wb_state_view())
+        if parsed.path == "/api/wb/sources":
+            try:
+                payload = json.loads(body)
+            except Exception:
+                return self._json({"ok": False, "error": "invalid JSON"}, 400)
+            if not isinstance(payload, dict):
+                return self._json({"ok": False, "error": "invalid JSON"}, 400)
+            st = load_state()
+            src, err = None, None
+            if "url" in payload:
+                src, err = wb_add_url(payload.get("url"))
+                if src is not None:
+                    if "modrinth" in src:
+                        slug = wb_modrinth_slug(payload.get("url"))
+                        dup = any("modrinth" in s
+                                  and wb_modrinth_slug(s["modrinth"]) == slug
+                                  for s in st.get("sources", []))
+                    else:
+                        dup = any(s.get("url") == src["url"]
+                                  for s in st.get("sources", []))
+                    if dup:
+                        src, err = None, "That pack is already in the list."
+            elif "path" in payload:
+                src, err = wb_add_path(payload.get("path"))
+                if src is not None:
+                    dup = any("path" in s
+                              and os.path.normpath(s["path"])
+                              == os.path.normpath(src["path"])
+                              for s in st.get("sources", []))
+                    if dup:
+                        src, err = None, "That pack is already in the list."
+            else:
+                err = "Provide a url or a path."
+            if err:
+                return self._json({"ok": False, "error": err}, 400)
+            st["sources"] = st.get("sources", []) + [src]
+            save_state(st)
+            return self._json(wb_state_view())
+        if parsed.path == "/api/wb/sources/reorder":
+            try:
+                order = json.loads(body).get("order")
+            except Exception:
+                order = None
+            st = load_state()
+            srcs = st.get("sources", [])
+            if (not isinstance(order, list)
+                    or sorted(order) != list(range(len(srcs)))):
+                return self._json(
+                    {"ok": False,
+                     "error": "order must list every source index once"}, 400)
+            st["sources"] = [srcs[i] for i in order]
+            save_state(st)
+            return self._json(wb_state_view())
+        m = re.match(r"^/api/wb/sources/(\d+)/enabled$", parsed.path)
+        if m:
+            try:
+                enabled = json.loads(body).get("enabled")
+            except Exception:
+                enabled = None
+            if not isinstance(enabled, bool):
+                return self._json(
+                    {"ok": False, "error": "enabled must be true or false"},
+                    400)
+            st = load_state()
+            idx = int(m.group(1))
+            srcs = st.get("sources", [])
+            if idx < 0 or idx >= len(srcs):
+                return self._json({"ok": False, "error": "no such source"},
+                                  404)
+            srcs[idx]["enabled"] = enabled
+            save_state(st)
+            return self._json(wb_state_view())
+        if parsed.path == "/api/wb/run":
+            try:
+                mode = json.loads(body).get("mode", "build")
+            except Exception:
+                mode = "build"
+            if mode not in ("build", "check"):
+                mode = "build"
+            ok, err = wb_start_run(mode)
+            if not ok:
+                return self._json({"ok": False, "error": err}, 409)
+            return self._json({"ok": True})
+        self.send_error(404)
+
+    def do_DELETE(self):
+        parsed = urllib.parse.urlparse(self.path)
+        m = re.match(r"^/api/wb/sources/(\d+)$", parsed.path)
+        if m:
+            st = load_state()
+            idx = int(m.group(1))
+            srcs = st.get("sources", [])
+            if idx < 0 or idx >= len(srcs):
+                return self._json({"ok": False, "error": "no such source"},
+                                  404)
+            srcs.pop(idx)
+            save_state(st)
+            return self._json(wb_state_view())
+        if parsed.path == "/api/wb/sources":
+            st = load_state()
+            st["sources"] = []
+            save_state(st)
+            return self._json(wb_state_view())
         self.send_error(404)
 
     def _app_update(self, body):
