@@ -321,6 +321,7 @@ def wb_source_view(i, s):
         "version": s.get("version"),
         "ref": s.get("modrinth") or s.get("url") or s.get("path"),
         "subscribed": bool(s.get("subscribed")),
+        "icon_url": s.get("icon_url"),
     }
 
 
@@ -1773,6 +1774,12 @@ def wb_discover_search(qs):
     sort = (qs.get("sort") or ["relevance"])[0]
     if sort not in WB_DISCOVER_SORTS:
         sort = "relevance"
+    offset_raw = (qs.get("offset") or ["0"])[0]
+    if not re.fullmatch(r"[0-9]+", offset_raw):
+        return None, "unknown offset", 400
+    offset = int(offset_raw)
+    if offset > 100000:
+        return None, "unknown offset", 400
     q = query.strip()
     if "shader" in q.lower():
         # Discover carries no shaders (see the header comment); a
@@ -1784,6 +1791,7 @@ def wb_discover_search(qs):
            + urllib.parse.quote(q)
            + "&facets=" + urllib.parse.quote(json.dumps(facets))
            + "&index=" + sort
+           + "&offset=" + str(offset)
            + "&limit=" + str(WB_DISCOVER_LIMIT))
     try:
         req = urllib.request.Request(
@@ -1829,6 +1837,7 @@ def wb_discover_search(qs):
             "in_sources": slug in known_slugs,
         })
     return {"ok": True, "total": data.get("total_hits", len(results)),
+            "offset": offset,
             "results": results}, None, 200
 
 
@@ -1899,7 +1908,8 @@ def wb_discover_subscribe(slug):
                      "pack_type": ptype,
                      "subscribed": True,
                      "subscribed_slug": slug,
-                     "subscribed_version": info["version_number"]})
+                     "subscribed_version": info["version_number"],
+                     "icon_url": proj.get("icon_url")})
         idx = len(srcs) - 1
     else:
         # Already a source (added via URL): subscribing flags it for
@@ -1908,6 +1918,7 @@ def wb_discover_subscribe(slug):
         existing["subscribed"] = True
         existing["subscribed_slug"] = slug
         existing["subscribed_version"] = info["version_number"]
+        existing["icon_url"] = proj.get("icon_url")
     save_state(st)
     downloaded, dl_err = wb_discover_download(idx, info)
     return {"ok": True, "already": False, "downloaded": downloaded,

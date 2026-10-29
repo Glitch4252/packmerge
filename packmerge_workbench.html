@@ -649,19 +649,19 @@
                 <h2>Conflicts <span class="right"><button class="btn small ghost" id="openConflictsBtn">Open Conflicts</button></span></h2>
                 <div class="conflict-mini">
                   <div>
-                    <div class="big" id="wbOpenCount">3</div>
+                    <div class="big" id="wbOpenCount">–</div>
                     <div class="lbl">need a decision</div>
                   </div>
                   <div class="next">
                     <span class="k">Next up</span>
-                    <code id="wbNextPath">assets/minecraft/textures/block/grass_block_top.png</code>
-                    <span class="p" id="wbNextParties">Faithful 32× vs Stay True · texture</span>
+                    <code id="wbNextPath">Scanning sources…</code>
+                    <span class="p" id="wbNextParties">Checking current sources for contested files.</span>
                   </div>
                   <button class="btn accent" id="reviewNextBtn">Review next conflict</button>
                 </div>
                 <div class="smartnote">
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
-                  <span><b>Everything else is handled:</b> 2 files were smart-merged automatically and 1 was settled by list priority. Comparison, bulk actions, and JSON diffs live on the Conflicts page — the Workbench only tracks status and the next item.</span>
+                  <span><b>Everything else is handled:</b> Comparison, bulk actions, and JSON diffs live on the Conflicts page — the Workbench only tracks status and the next item.</span>
                 </div>
               </div>
             </div>
@@ -700,7 +700,7 @@
 
               <div class="card" id="notificationsCard">
                 <h2>Notifications <span class="right"><button class="btn small ghost" id="viewActivityBtn">View Activity</button></span></h2>
-                <p class="hint">Downloaded updates waiting to be applied. Select an item to review and act on it in Activity.</p>
+                <p class="hint">When updates are available, they appear here. Select an item to review and act on it in Activity.</p>
                 <div id="notificationList"></div>
               </div>
             </div>
@@ -713,10 +713,10 @@
           <div class="right"><button class="btn accent" id="jumpOpenBtn">Review next open conflict</button></div></div>
 
           <div class="conflict-stats">
-            <div class="stat warn"><div class="n" id="statOpen">3</div><div class="t">need a decision</div></div>
-            <div class="stat ok"><div class="n">2</div><div class="t">smart-merged automatically</div></div>
-            <div class="stat"><div class="n">1</div><div class="t">settled by list priority</div></div>
-            <div class="stat"><div class="n">6</div><div class="t">override the vanilla <span style="font-family:ui-monospace,Menlo,monospace">minecraft</span> namespace</div></div>
+            <div class="stat warn"><div class="n" id="statOpen">–</div><div class="t">need a decision</div></div>
+            <div class="stat ok"><div class="n">–</div><div class="t">smart-merged automatically</div></div>
+            <div class="stat"><div class="n">–</div><div class="t">settled by list priority</div></div>
+            <div class="stat"><div class="n">–</div><div class="t">override the vanilla <span style="font-family:ui-monospace,Menlo,monospace">minecraft</span> namespace</div></div>
           </div>
 
           <div class="card" id="queueCard">
@@ -736,48 +736,7 @@
               <button class="btn small ghost" id="bulkRuleBtn">Save winners as rules</button>
             </div>
             <div id="conflictQueue">
-              <div class="queue-group" data-group>
-                <div class="qh"><span>Needs a decision</span><span class="qc" data-group-count></span><span class="line"></span></div>
-                <div class="crow selected" data-row data-id="grass" data-kind="texture" data-status="open" data-namespace="minecraft" data-search="grass_block_top faithful stay true texture block">
-                  <span class="pill kind">TEXTURE</span><span class="pill vanilla">VANILLA NS</span>
-                  <span class="cp"><span class="path">assets/minecraft/textures/block/grass_block_top.png</span><div class="parties">Faithful 32× vs Stay True · binary files differ</div></span>
-                  <span class="pill open" data-status-pill>OPEN</span>
-                  <span class="acts"><button class="btn small" data-review="grass">Review</button><button class="btn small ghost" data-apply="grass">Apply priority</button></span>
-                </div>
-                <div class="crow" data-row data-id="lang" data-kind="json" data-status="open" data-namespace="minecraft" data-search="lang en_us json translation default dark mode stay true">
-                  <span class="pill kind">JSON</span><span class="pill vanilla">VANILLA NS</span>
-                  <span class="cp"><span class="path">assets/minecraft/lang/en_us.json</span><div class="parties">Default Dark Mode vs Stay True · 214 keys unioned, 3 keys differ</div></span>
-                  <span class="pill open" data-status-pill>OPEN</span>
-                  <span class="acts"><button class="btn small" data-review="lang">View diff</button><button class="btn small ghost" data-apply="lang">Apply priority</button></span>
-                </div>
-                <div class="crow" data-row data-id="model" data-kind="json" data-status="open" data-namespace="minecraft" data-search="models item iron_pickaxe json faithful fresh animations">
-                  <span class="pill kind">JSON</span><span class="pill vanilla">VANILLA NS</span>
-                  <span class="cp"><span class="path">assets/minecraft/models/item/iron_pickaxe.json</span><div class="parties">Faithful 32× vs Fresh Animations · parent model and texture references differ</div></span>
-                  <span class="pill open" data-status-pill>OPEN</span>
-                  <span class="acts"><button class="btn small" data-review="model">View diff</button><button class="btn small ghost" data-apply="model">Apply priority</button></span>
-                </div>
-              </div>
-              <div class="queue-group" data-group>
-                <div class="qh"><span>Smart-merged — no decision needed</span><span class="qc" data-group-count></span><span class="line"></span></div>
-                <div class="crow" data-row data-id="pickaxe-tag" data-kind="json" data-status="smart" data-namespace="minecraft" data-search="tags block mineable pickaxe json union terralith vanilla tweaks">
-                  <span class="pill kind">JSON · TAG</span><span class="pill vanilla">VANILLA NS</span>
-                  <span class="cp"><span class="path">data/minecraft/tags/block/mineable/pickaxe.json</span><div class="parties">Terralith + Vanilla Tweaks · values unioned, 41 total</div></span>
-                  <span class="pill smart" data-status-pill>UNIONED</span>
-                </div>
-                <div class="crow" data-row data-id="sounds" data-kind="json" data-status="smart" data-namespace="minecraft" data-search="sounds json union stay true fresh animations">
-                  <span class="pill kind">JSON</span><span class="pill vanilla">VANILLA NS</span>
-                  <span class="cp"><span class="path">assets/minecraft/sounds.json</span><div class="parties">Stay True + Fresh Animations · 18 sound events combined, no overlapping keys</div></span>
-                  <span class="pill smart" data-status-pill>COMBINED</span>
-                </div>
-              </div>
-              <div class="queue-group" data-group id="settledGroup">
-                <div class="qh"><span>Settled by priority or rule</span><span class="qc" data-group-count></span><span class="line"></span></div>
-                <div class="crow" data-row data-id="recipe" data-kind="json" data-status="resolved" data-namespace="minecraft" data-search="recipes iron_pickaxe json terralith priority">
-                  <span class="pill kind">JSON</span><span class="pill vanilla">VANILLA NS</span>
-                  <span class="cp"><span class="path">data/minecraft/recipes/iron_pickaxe.json</span><div class="parties">Terralith wins by list priority · Vanilla Tweaks version not used</div></span>
-                  <span class="pill done" data-status-pill>PRIORITY</span>
-                </div>
-              </div>
+              <p class="hint">Scanning sources…</p>
               <p class="hint" id="queueEmpty" style="display:none; margin:10px 0 2px">No conflicts match the current search or filter.</p>
             </div>
           </div>
@@ -915,6 +874,7 @@
             <span class="disc-count" id="discCount"></span>
           </div>
           <div class="disc-grid" id="discGrid"></div>
+          <div style="text-align:center;margin:14px 0 4px"><button class="btn small ghost" id="discLoadMore" style="display:none">Load more</button></div>
         </section>
 
         <!-- ======== ACTIVITY ======== -->
@@ -1041,6 +1001,11 @@
          They sit here — no merge runs — until the next build (manual or
          automatic) folds them in and bumps each source to its new version. */
       var queued = [];
+      /* Real updates do not exist until slice 5 wires the update queue.
+         The Workbench card and the Activity nav badge read ONLY this
+         list (so they never show demo entries); the Activity tab itself
+         keeps its demo `updates` array until slice 5 replaces it. */
+      var realUpdates = [];
       var toggles = [
         {group:"Default Dark Mode", ns:"darkmode", items:[
           {key:"darkMode", label:"Dark mode UI", desc:"Swaps the vanilla GUI to the dark texture set.", files:272, on:true, samples:["assets/minecraft/textures/gui/container/inventory.png","assets/minecraft/textures/gui/widgets.png","assets/minecraft/textures/gui/title/background/panorama_0.png"]},
@@ -1083,7 +1048,11 @@
       };
       function paint(canvas){
         var seed=canvas.getAttribute("data-seed");
-        var pal=palettes[seed]||palettes.grass;
+        /* Known seeds keep their exact palette; anything else (e.g. a
+           real source's slug) hash-picks one, so real sources never
+           all collapse to the grass fallback. */
+        var keys=Object.keys(palettes);
+        var pal=palettes[seed]||palettes[keys[hashStr(seed)%keys.length]];
         var ctx=canvas.getContext("2d"); if(!ctx) return;
         var w=canvas.width,h=canvas.height,r=rng(seed);
         for(var y=0;y<h;y++)for(var x=0;x<w;x++){
@@ -1118,9 +1087,10 @@
         if(s.sub) badges+=' <span class="badge sub">SUBSCRIBED</span>';
         if(s.update) badges+=' <span class="upd">New version in · not applied</span>';
         if(s.queued) badges+=' <span class="upd">Update queued · applies on next build</span>';
+        var thumb=s.icon_url?'<img src="'+String(s.icon_url).replace(/&/g,"&amp;").replace(/"/g,"&quot;")+'" alt="" style="width:100%;height:100%;object-fit:cover;display:block">':'<canvas class="pix" data-seed="'+s.seed+'" width="16" height="16"></canvas>';
         row.innerHTML=
           '<span class="grip" title="Drag to reorder priority"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.8"/><circle cx="15" cy="6" r="1.8"/><circle cx="9" cy="12" r="1.8"/><circle cx="15" cy="12" r="1.8"/><circle cx="9" cy="18" r="1.8"/><circle cx="15" cy="18" r="1.8"/></svg></span>'
-          +'<span class="thumb"><canvas class="pix" data-seed="'+s.seed+'" width="16" height="16"></canvas></span>'
+          +'<span class="thumb">'+thumb+'</span>'
           +'<div class="meta"><div class="nm">'+s.name+' '+badges+'</div>'
           +'<div class="det">'+s.kind+' · '+s.files+' · '+s.ver+' — '+s.note+'</div></div>'
           +((s.update||s.queued)?'<span class="updot" title="'+(s.queued?"Update queued — applies on the next build":"New version downloaded — not applied yet")+'"></span>':'')
@@ -1231,8 +1201,10 @@
          Only the current build status is shown on the Workbench; there is
          no build history, restore, or staged-configuration flow. */
       function syncUpdateBadges(){
-        var n=updates.length;
-        var nav=el("navActivityCount"); if(nav){ nav.textContent=String(n); nav.style.display=n?"":"none"; }
+        /* Nav badge reads real updates only (hidden at zero); the
+           Activity-page stat still reads the demo array until slice 5. */
+        var n=realUpdates.length;
+        var nav=el("navActivityCount"); if(nav){ nav.textContent=n?String(n):""; nav.style.display=n?"":"none"; }
         var st=el("statActivityUpdates"); if(st) st.textContent=String(updates.length+queued.length);
         syncQueueUI();
       }
@@ -1265,11 +1237,11 @@
       }
       function renderNotifications(){
         var wrap=el("notificationList"); if(!wrap) return; wrap.innerHTML="";
-        if(!updates.length){
+        if(!realUpdates.length){
           wrap.innerHTML='<p class="hint" style="margin:0 0 8px">No new updates.</p>'
             +'<button class="btn small ghost" data-goto-activity>Open Activity</button>';
         } else {
-          updates.forEach(function(u){
+          realUpdates.forEach(function(u){
             var row=document.createElement("div"); row.className="upd-row notif-row"; row.setAttribute("role","button"); row.setAttribute("tabindex","0");
             row.setAttribute("title","Open in Activity to review and apply this update");
             row.innerHTML='<span class="thumb"><canvas class="pix" data-seed="'+u.seed+'" width="16" height="16"></canvas></span>'
@@ -1766,29 +1738,11 @@
         var exists=Array.prototype.some.call(rl.querySelectorAll(".conflict-path"),function(d){return d.textContent===text});
         if(!exists){var d=document.createElement("div"); d.className="conflict-path"; d.textContent=text; rl.appendChild(d)}
       }
-      function updateConflictSummary(){
-        var open=conflictRows().filter(function(r){return r.getAttribute("data-status")==="open"});
-        var n=open.length;
-        var nav=el("navConflictCount");
-        nav.textContent=String(n); nav.style.display=n?"":"none";
-        el("statOpen").textContent=String(n);
-        el("wbOpenCount").textContent=String(n);
-        el("jumpOpenBtn").disabled=!n;
-        if(n){
-          var first=open[0];
-          el("wbNextPath").textContent=first.querySelector(".path").textContent;
-          el("wbNextParties").textContent=first.querySelector(".parties").textContent;
-          el("conflictPos").textContent="Needs decision · 1 of "+n+" open";
-        }else{
-          el("wbNextPath").textContent="Nothing waiting";
-          el("wbNextParties").textContent="All contested files have a saved decision.";
-          el("conflictPos").textContent="All open conflicts resolved";
-        }
-        document.querySelectorAll("[data-group]").forEach(function(g){
-          var c=g.querySelector("[data-group-count]");
-          if(c) c.textContent=g.querySelectorAll("[data-row]").length+" files";
-        });
-      }
+      /* updateConflictSummary removed: the Workbench Conflicts card is
+         owned solely by slice 2's renderSummary(), fed by the real
+         /api/wb/conflicts endpoint. The demo updater used to read the
+         static demo rows as data, which is how demo pack names ended
+         up on the card for packs the user doesn't own. */
       function markResolved(id,method){
         var row=rowById(id); if(!row||row.getAttribute("data-status")!=="open") return;
         row.setAttribute("data-status","resolved"); row.classList.add("resolved");
@@ -1804,11 +1758,10 @@
           var dp=el("diffStatusPill"); dp.className="pill done"; dp.textContent="Resolved";
         }
         if(method==="rule") appendRule(row.querySelector(".path").textContent+" → "+priorityWinner(id));
-        updateConflictSummary();
       }
       function renderDiff(id){
         var d=diffData[id]; if(!d) return;
-        var row=rowById(id);
+        var row=rowById(id); if(!row) return;
         el("diffPath").textContent=row.querySelector(".path").textContent;
         el("diffNote").textContent=d.note;
         var pill=el("diffStatusPill");
@@ -1932,7 +1885,6 @@
       el("openConflictsBtn").addEventListener("click",function(){showView("conflicts")});
       el("reviewNextBtn").addEventListener("click",reviewNext);
       el("jumpOpenBtn").addEventListener("click",reviewNext);
-      renderDiff("lang"); updateConflictSummary();
 
       /* ================= nav & misc wiring ================= */
       document.querySelectorAll(".navitem").forEach(function(n){
@@ -2251,7 +2203,9 @@
       name: v.name, type: isRP ? "RP" : "DP", kind: kind,
       files: (v.files != null ? v.files.toLocaleString("en-US") + " files" : "—"),
       ver: v.version || "—", on: v.enabled,
-      seed: "wb" + v.index, note: note,
+      /* Stable per-source seed (a reorder must not change the icon),
+         plus the real Modrinth icon when the source has one. */
+      seed: slugify(v.name), icon_url: v.icon_url || "", note: note,
       sub: v.kind === "modrinth", rpo: 0, update: false, queued: false
     };
   }
@@ -3012,6 +2966,14 @@
           esc((d && d.error) || ("HTTP " + s)) + "</p>";
         el("textureDetailCard").style.display = "none";
         el("diffCard").style.display = "none";
+        /* The card must never fall back to demo names: on a failed
+           scan it says so honestly instead. */
+        el("wbNextPath").textContent = "Couldn't scan sources";
+        el("wbNextParties").textContent = (d && d.error) || ("HTTP " + s);
+        el("wbOpenCount").textContent = "–";
+        el("jumpOpenBtn").disabled = true;
+        var nav = el("navConflictCount");
+        if (nav){ nav.textContent = ""; nav.style.display = "none"; }
       }
     });
   }
@@ -3530,34 +3492,58 @@
     return card;
   }
 
-  function renderDiscoverReal(){
-    var grid = el("discGrid"); if(!grid) return;
-    var seq = ++discSeq;
-    grid.innerHTML = '<p class="hint">Searching Modrinth…</p>';
-    var countEl = el("discCount"); if(countEl) countEl.textContent = "";
-    var qs = "query=" + encodeURIComponent(el("discSearch").value)
+  /* Pagination state: a fresh search resets to page 1; Load more
+     appends the next page with the same query + filters. The shader
+     guard lives server-side, so it applies to every page. */
+  var discOffset = 0, discTotal = 0, discShown = 0, discLoadingMore = false;
+
+  function discQueryString(offset){
+    return "query=" + encodeURIComponent(el("discSearch").value)
       + "&pack_type=" + encodeURIComponent(el("discPackType").value)
       + "&category=" + encodeURIComponent(el("discCategory").value)
       + "&version=" + encodeURIComponent(el("discVersion").value)
-      + "&sort=" + encodeURIComponent(el("discSort").value);
+      + "&sort=" + encodeURIComponent(el("discSort").value)
+      + "&offset=" + offset;
+  }
+
+  function discCountText(shown, total){
+    return total > shown
+      ? ("Showing " + shown + " of " + total.toLocaleString("en-US") + " results")
+      : (total + " result" + (total === 1 ? "" : "s"));
+  }
+
+  function updateLoadMore(){
+    var b = el("discLoadMore"); if(!b) return;
+    b.style.display = (discTotal > discShown) ? "" : "none";
+    b.disabled = false;
+  }
+
+  function renderDiscoverReal(){
+    var grid = el("discGrid"); if(!grid) return;
+    var seq = ++discSeq;
+    discOffset = 0; discShown = 0; discTotal = 0;
+    var lm = el("discLoadMore"); if(lm) lm.style.display = "none";
+    grid.innerHTML = '<p class="hint">Searching Modrinth…</p>';
+    var countEl = el("discCount"); if(countEl) countEl.textContent = "";
+    var qs = discQueryString(0);
     discApi("GET", "/api/wb/discover/search?" + qs).then(function(d){
       if(seq !== discSeq) return;
       var total = d.total, list = d.results || [];
+      discTotal = total; discShown = list.length; discOffset = list.length;
       if(countEl){
-        countEl.textContent = total > list.length
-          ? ("Showing " + list.length + " of "
-             + total.toLocaleString("en-US") + " results")
-          : (total + " result" + (total === 1 ? "" : "s"));
+        countEl.textContent = discCountText(discShown, total);
       }
       grid.innerHTML = "";
       if(!list.length){
         grid.innerHTML = d.shader_query
           ? '<p class="hint">Discover doesn\'t list shader packs — try a resource or data pack.</p>'
           : '<p class="hint">No results match the current search and filters.</p>';
+        updateLoadMore();
         return;
       }
       list.forEach(function(r){ grid.appendChild(cardEl(r)); });
       paintAll(grid);
+      updateLoadMore();
     }).catch(function(e){
       if(seq !== discSeq) return;
       if(countEl) countEl.textContent = "";
@@ -3566,6 +3552,32 @@
         + '<button class="btn small" id="discRetry">Try again</button>';
       var rb = el("discRetry");
       if(rb) rb.addEventListener("click", renderDiscoverReal);
+      updateLoadMore();
+    });
+  }
+
+  function loadMoreDiscover(){
+    if(discLoadingMore) return;
+    var grid = el("discGrid"); if(!grid) return;
+    var seq = discSeq;
+    discLoadingMore = true;
+    var b = el("discLoadMore"); if(b) b.disabled = true;
+    var qs = discQueryString(discShown);
+    discApi("GET", "/api/wb/discover/search?" + qs).then(function(d){
+      discLoadingMore = false;
+      if(seq !== discSeq) return;
+      var list = d.results || [];
+      list.forEach(function(r){ grid.appendChild(cardEl(r)); });
+      paintAll(grid);
+      discShown += list.length; discTotal = d.total; discOffset = discShown;
+      var countEl = el("discCount");
+      if(countEl) countEl.textContent = discCountText(discShown, discTotal);
+      updateLoadMore();
+    }).catch(function(e){
+      discLoadingMore = false;
+      if(seq !== discSeq) return;
+      toast("Couldn't load more: " + e.message);
+      if(b) b.disabled = false;
     });
   }
 
@@ -3602,6 +3614,8 @@
   document.querySelectorAll(".navitem").forEach(function(n){
     n.addEventListener("click", refreshSubBadge);
   });
+  var lmBtn = el("discLoadMore");
+  if(lmBtn) lmBtn.addEventListener("click", loadMoreDiscover);
   refreshSubBadge();
   renderDiscoverReal();
 })();
