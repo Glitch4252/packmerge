@@ -352,6 +352,39 @@ def normalize_conf(node):
     return new
 
 
+def apply_rpo_default(conf, dotted, value):
+    """Set one config entry's default (dotted path) in place. Returns bool.
+
+    Only existing entries are touched; categories and unknown paths are
+    refused so a bad value can never rewrite a config's shape. Shorthand
+    entries (a bare bool/int/str) are replaced by the new value itself.
+    """
+    parts = dotted.split(".")
+    if not parts or any(not p for p in parts):
+        return False
+    node = conf
+    for part in parts[:-1]:
+        if not isinstance(node, dict):
+            return False
+        node = node.get(part)
+        if node is None:
+            return False
+        if isinstance(node, dict) and "type" in node:
+            return False  # an entry, not a category
+    if not isinstance(node, dict):
+        return False
+    entry = node.get(parts[-1])
+    if entry is None:
+        return False
+    if isinstance(entry, dict):
+        if "type" not in entry:
+            return False  # a category, not an entry
+        entry["default"] = value
+        return True
+    node[parts[-1]] = value
+    return True
+
+
 def collect_entry_paths(conf, prefix=()):
     """All condition-referencable entry paths, e.g. ('ui', 'darkMode')."""
     paths = []
@@ -383,14 +416,27 @@ def merge_respackopts(merged, origin, rpo_sources, manifest):
                           or manifest.get("pack_name", "merged"))
     lang_ns = mid.lower()  # asset namespaces must be lowercase
 
-    # Unique alphabetic category per source.
+    # Unique alphabetic category per source. A workbench namespace
+    # rename (manifest "rpo_namespace_overrides") replaces the derived
+    # category; a colliding override is refused server-side, and the
+    # engine keeps the derived name with a warning rather than ever
+    # silently overwriting another source's category.
     cats = {}
+    ns_overrides = manifest.get("rpo_namespace_overrides") or {}
     for name, _cfg in rpo_sources:
         base = sanitize_rpo_id(name)
         cat, k = base, 0
         while cat in cats.values():
             k += 1
             cat = base + chr(ord("A") + k - 1)
+        if name in ns_overrides and isinstance(ns_overrides[name], str) \
+                and ns_overrides[name]:
+            want = ns_overrides[name]
+            if want not in cats.values():
+                cat = want
+            else:
+                warn(f"'{name}': namespace override '{want}' is already "
+                     f"used; keeping '{cat}'")
         cats[name] = cat
 
     meta = {}  # name -> {"cat": ..., "path_map": {...}}
@@ -1126,11 +1172,44 @@ def main():
                      f"config left as-is")
                 continue
             rpo_sources.append((name, cfg))
-    if len(rpo_sources) >= 2 and manifest.get("merge_respackopts", True):
+    # Bake workbench-pending RPO values as defaults before merging: the
+    # merged config then carries them, and they travel with the output.
+    # Pending values for entries that do not exist are ignored loudly.
+    rpo_defaults = manifest.get("rpo_defaults") or {}
+    for name, cfg in rpo_sources:
+        for path, val in (rpo_defaults.get(name) or {}).items():
+            if not apply_rpo_default(cfg.get("conf", {}), path, val):
+                warn(f"'{name}': pending RPO value for '{path}' does not "
+                     f"match a config entry; ignoring it")
+    rpo_ns = manifest.get("rpo_namespace_overrides") or {}
+    merge_on = manifest.get("merge_respackopts", True)
+    if len(rpo_sources) >= 2 and merge_on:
+        merge_respackopts(merged, origin, rpo_sources, manifest)
+    elif len(rpo_sources) == 1 and merge_on and rpo_ns.get(rpo_sources[0][0]):
+        # A renamed single config runs the namespaced merge so the
+        # rename lands; otherwise a single config passes through.
         merge_respackopts(merged, origin, rpo_sources, manifest)
     elif len(rpo_sources) == 1:
         log(f"Respackopts: single config from '{rpo_sources[0][0]}' "
             f"passed through unchanged")
+        # Bake pending defaults into the passed-through config itself.
+        defaults = rpo_defaults.get(rpo_sources[0][0]) or {}
+        if defaults and "respackopts.json5" in merged:
+            src_name = origin.get("respackopts.json5", "").split(" (")[0]
+            if src_name == rpo_sources[0][0]:
+                try:
+                    cfg = json5_loads(
+                        merged["respackopts.json5"].decode("utf-8"))
+                except Exception:
+                    cfg = None
+                if cfg is not None:
+                    changed = False
+                    for path, val in defaults.items():
+                        changed = apply_rpo_default(
+                            cfg.get("conf", {}), path, val) or changed
+                    if changed:
+                        merged["respackopts.json5"] = (
+                            json.dumps(cfg, indent=4) + "\n").encode()
     elif len(rpo_sources) >= 2:
         warn("multiple respackopts.json5 found but merge_respackopts is off; "
              "top-wins applies and some toggles may break")

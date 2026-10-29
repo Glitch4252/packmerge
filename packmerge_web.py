@@ -312,9 +312,9 @@ def wb_state_view():
         "sources": [wb_source_view(i, s) for i, s in enumerate(srcs)],
         "included": len(enabled),
         "total": len(srcs),
-        # Slice 1 has no update/RPO queue yet; the field exists so the
-        # Build card can count it once later slices wire it.
-        "queue_count": 0,
+        # The merge queue counts pending RPO setting changes (queued
+        # pack updates arrive in a later slice and add to this).
+        "queue_count": wb_rpo_pending_count(st),
         "last_build": st.get("wb_last_build"),
         "last_output_size": st.get("wb_last_output_size"),
     }
@@ -412,6 +412,31 @@ def wb_build_manifest():
             overrides[p] = ref
         elif ref.isdigit() and int(ref) in temp_pos:
             overrides[p] = str(temp_pos[int(ref)])
+    # RPO baking: the engine bakes EFFECTIVE values as merged-config
+    # defaults — baked values overridden by pending ones — for enabled
+    # sources only. Passing baked values every build (not just pending
+    # ones) is what keeps a baked value in later outputs after pending
+    # is consumed; otherwise the next build would revert to the source
+    # pack's defaults. Keys are filtered to settings that exist right
+    # now, so stale entries (pack changed since) never warn in the log.
+    # Pending/renames for disabled/removed sources stay in state and
+    # apply again if the source returns.
+    pending = st.get("wb_rpo_pending", {}) or {}
+    baked = st.get("wb_rpo_baked", {}) or {}
+    renames = st.get("wb_rpo_namespaces", {}) or {}
+    try:
+        _existing = {s["name"]: {t["key"] for t in s["settings"]}
+                     for s in wb_rpo_scan()["sources"]}
+    except Exception:
+        _existing = {}
+    rpo_defaults = {}
+    for _n in enabled_names:
+        _eff = dict(baked.get(_n, {}) or {})
+        _eff.update(pending.get(_n, {}) or {})
+        if _n in _existing:
+            _eff = {k: v for k, v in _eff.items() if k in _existing[_n]}
+        if _eff:
+            rpo_defaults[_n] = _eff
     return {
         "mc_version": st.get("mc_version", "latest"),
         "pack_name": st.get("pack_name", "") or "packmerge",
@@ -422,6 +447,9 @@ def wb_build_manifest():
         "sources": clean,
         "overrides": overrides,
         "exclude": st.get("exclude", []),
+        "rpo_defaults": rpo_defaults,
+        "rpo_namespace_overrides": {n: v for n, v in renames.items()
+                                    if n in enabled_names and v},
     }, enabled
 
 
@@ -532,6 +560,11 @@ def wb_after_build(rc, mode, orig_index, temp_index):
             st["wb_last_build"] = datetime.now(timezone.utc).isoformat()
             st["wb_last_output_size"] = os.path.getsize(out_path)
     save_state(st)
+    # A successful build bakes pending RPO values; they become the new
+    # baseline and pending clears. Check runs never consume (nothing
+    # was baked), and failed runs change nothing (early return above).
+    if mode == "build":
+        wb_rpo_consume_pending()
 
 
 def wb_start_run(mode):
@@ -1223,6 +1256,430 @@ def wb_mutate_conflict(path, action, winner_index=None):
     return wb_scan_conflicts(), None, 200
 
 
+# ------------------------------------------------------------ workbench RPO (2.0 slice 3)
+# The RPO Toggles tab runs on real configs from the enabled sources.
+# A source's respackopts.json5 declares entries (switch/enum/slider);
+# labels come from its lang files (rpo.<id>.<path>[.tooltip]) with the
+# key itself as fallback. Changes are PENDING until the next build:
+# they never rewrite the source packs, only the merged pack's baked
+# defaults (via manifest rpo_defaults), and a successful build consumes
+# them into wb_rpo_baked. Namespaces are the merged config's per-source
+# categories; a rename is a manifest rpo_namespace_overrides entry.
+# Pending/renames are keyed by source NAME (same convention as slice 2
+# decisions); an ambiguous name is refused, never guessed.
+
+def wb_rpo_pending_count(st=None):
+    """Pending RPO changes, counted as settings. Set-time discipline
+    (a value equal to its baseline drops its entry) and build-time
+    consumption keep this exact without scanning any zip."""
+    st = st if st is not None else load_state()
+    n = 0
+    for vals in (st.get("wb_rpo_pending", {}) or {}).values():
+        if isinstance(vals, dict):
+            n += len(vals)
+    return n
+
+
+def _wb_rpo_eq(a, b):
+    """Type-strict equality: True != 1, but 1 == 1.0 for numbers."""
+    if isinstance(a, bool) or isinstance(b, bool):
+        return type(a) is type(b) and a == b
+    return a == b
+
+
+def wb_rpo_entry_at(conf, dotted):
+    """The entry node at a dotted path, or None for unknown paths and
+    categories."""
+    if not isinstance(conf, dict):
+        return None
+    node = conf
+    for part in dotted.split("."):
+        if not isinstance(node, dict):
+            return None
+        node = node.get(part)
+        if node is None:
+            return None
+    if isinstance(node, dict) and "type" not in node:
+        return None  # a category, not an entry
+    return node
+
+
+def wb_rpo_entry_view(entry):
+    """Normalize one entry to UI shape. Returns None for categories
+    and values that carry no usable type."""
+    if isinstance(entry, dict) and "type" in entry:
+        t = str(entry.get("type", "string"))
+        default = entry.get("default")
+        values = entry.get("values")
+        if values is None:
+            values = entry.get("options")
+        mn = entry.get("min", entry.get("minimum"))
+        mx = entry.get("max", entry.get("maximum"))
+        step = entry.get("step")
+        unit = entry.get("unit")
+    elif isinstance(entry, bool):
+        t, default = "boolean", entry
+        values, mn, mx, step, unit = None, None, None, None, None
+    elif isinstance(entry, int):
+        t, default = "integer", entry
+        values, mn, mx, step, unit = None, None, None, None, None
+    elif isinstance(entry, float):
+        t, default = "number", entry
+        values, mn, mx, step, unit = None, None, None, None, None
+    elif isinstance(entry, str):
+        t, default = "string", entry
+        values, mn, mx, step, unit = None, None, None, None, None
+    else:
+        return None
+    if t == "boolean":
+        ui = "switch"
+    elif values is not None:
+        ui = "dropdown"
+    elif t in ("integer", "number"):
+        ui = "slider"
+    elif t == "string":
+        ui = "text"
+    else:
+        ui = "unsupported"
+    view = {"type": t, "ui": ui, "default": default}
+    if values is not None:
+        view["values"] = values if isinstance(values, list) else [values]
+    if mn is not None:
+        view["min"] = mn
+    if mx is not None:
+        view["max"] = mx
+    if step is not None:
+        view["step"] = step
+    if unit is not None:
+        view["unit"] = unit
+    return view
+
+
+def wb_rpo_validate(view, value):
+    """Error string for an invalid value, else None."""
+    t, ui = view["type"], view["ui"]
+    if ui == "unsupported":
+        return "this setting type is not editable here"
+    if t == "boolean":
+        if not isinstance(value, bool):
+            return "expected true or false"
+        return None
+    if ui == "dropdown":
+        for v in view["values"]:
+            if _wb_rpo_eq(v, value):
+                return None
+        return "value is not one of the allowed options"
+    if t == "integer":
+        if isinstance(value, bool) or not isinstance(value, int):
+            return "expected a whole number"
+        if view.get("min") is not None and value < view["min"]:
+            return "value is below the minimum (%s)" % view["min"]
+        if view.get("max") is not None and value > view["max"]:
+            return "value is above the maximum (%s)" % view["max"]
+        return None
+    if t == "number":
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return "expected a number"
+        if view.get("min") is not None and value < view["min"]:
+            return "value is below the minimum (%s)" % view["min"]
+        if view.get("max") is not None and value > view["max"]:
+            return "value is above the maximum (%s)" % view["max"]
+        return None
+    if t == "string":
+        if not isinstance(value, str):
+            return "expected text"
+        return None
+    return None
+
+
+def wb_rpo_scan():
+    """Full RPO report for enabled sources. Sources without a parseable
+    respackopts.json5 simply don't appear."""
+    st = load_state()
+    pending = st.get("wb_rpo_pending", {}) or {}
+    baked = st.get("wb_rpo_baked", {}) or {}
+    renames = st.get("wb_rpo_namespaces", {}) or {}
+    resolved, unscanned = wb_scan_sources()
+    parsed = {}  # full-list index -> (res, cfg)
+    for res in resolved:
+        try:
+            with zipfile.ZipFile(res["zip"]) as z:
+                arc = res["names"].get("respackopts.json5")
+                if arc is None:
+                    continue
+                cfg = _engine.json5_loads(z.read(arc[0]).decode("utf-8"))
+        except Exception:
+            continue
+        if isinstance(cfg, dict):
+            parsed[res["index"]] = (res, cfg)
+    # Natural categories in source order, derived exactly like the
+    # engine's, then renames. Keyed by NAME like the engine: a later
+    # same-named source overwrites, which is why set/rename refuse
+    # ambiguous names instead of guessing.
+    natural = {}
+    for idx in sorted(parsed):
+        name = parsed[idx][0]["name"]
+        base = _engine.sanitize_rpo_id(name)
+        cat, k = base, 0
+        while cat in natural.values():
+            k += 1
+            cat = base + chr(ord("A") + k - 1)
+        natural[name] = cat
+
+    def namespace_of(name):
+        if name in renames and renames[name]:
+            return renames[name]
+        return natural.get(name)
+
+    sources_out, namespaces_out = [], []
+    total_settings = total_gated = 0
+    switches_on = switches_total = 0
+    pending_count = 0
+    for idx in sorted(parsed):
+        res, cfg = parsed[idx]
+        name = res["name"]
+        ns = namespace_of(name)
+        sid = cfg.get("id", "") or ""
+        labels = {}
+        try:
+            with zipfile.ZipFile(res["zip"]) as z:
+                for norm, (arc, _sz) in res["names"].items():
+                    if not norm.endswith(".json"):
+                        continue
+                    if sid and (norm.startswith("assets/%s/lang/" % sid)
+                                or norm.startswith("assets/%s/lang/" % sid.lower())):
+                        try:
+                            data = json.loads(z.read(arc).decode("utf-8"))
+                        except Exception:
+                            continue
+                        if isinstance(data, dict):
+                            labels.update(data)
+        except Exception:
+            pass
+        # .rpo files: condition string -> governed files.
+        rpo_files = []  # (norm, condition, samples, governed_count)
+        try:
+            with zipfile.ZipFile(res["zip"]) as z:
+                for norm, (arc, _sz) in res["names"].items():
+                    if not norm.endswith(".rpo"):
+                        continue
+                    try:
+                        rpo = _engine.json5_loads(
+                            z.read(arc).decode("utf-8"))
+                    except Exception:
+                        continue
+                    cond = rpo.get("condition")
+                    if not isinstance(cond, str):
+                        continue
+                    if os.path.basename(norm) == ".rpo":
+                        d = os.path.dirname(norm)
+                        if d:
+                            gov = [p for p in res["names"]
+                                   if p.startswith(d + "/")
+                                   and not p.endswith(".rpo")]
+                        else:
+                            gov = [p for p in res["names"]
+                                   if "/" not in p
+                                   and not p.endswith(".rpo")]
+                        rpo_files.append((norm, cond, gov[:3], len(gov)))
+                    else:
+                        rpo_files.append((norm, cond, [norm[:-4]], 1))
+        except Exception:
+            pass
+        conf = cfg.get("conf", {}) if isinstance(cfg.get("conf", {}), dict) else {}
+        settings = []
+        gated_total = 0
+        for _path in _engine.collect_entry_paths(conf):
+            dotted = ".".join(_path)
+            node = wb_rpo_entry_at(conf, dotted)
+            if node is None:
+                continue
+            view = wb_rpo_entry_view(node)
+            if view is None:
+                continue
+            default = view["default"]
+            baseline = (baked.get(name, {}) or {}).get(dotted, default)
+            pend = pending.get(name, {}) or {}
+            if dotted in pend:
+                current = pend[dotted]
+                is_pending = not _wb_rpo_eq(current, baseline)
+            else:
+                current = baseline
+                is_pending = False
+            if is_pending:
+                pending_count += 1
+            conds = []
+            for norm, cond, samples, gcount in rpo_files:
+                if re.search(r"(?<![A-Za-z0-9_.])" + re.escape(dotted) +
+                             r"(?![A-Za-z0-9_])", cond):
+                    conds.append({"rpo": norm, "condition": cond,
+                                  "governed": samples,
+                                  "governed_count": gcount})
+                    gated_total += gcount
+            label = labels.get("rpo.%s.%s" % (sid, dotted)) if sid else None
+            tooltip = labels.get(
+                "rpo.%s.%s.tooltip" % (sid, dotted)) if sid else None
+            item = dict(view)
+            item.update({
+                "key": dotted,
+                "label": label if isinstance(label, str)
+                         else dotted.split(".")[-1],
+                "tooltip": tooltip if isinstance(tooltip, str) else "",
+                "value": current,
+                "pending": is_pending,
+                "conditions": conds,
+                "files_gated": sum(c["governed_count"] for c in conds),
+            })
+            settings.append(item)
+            total_settings += 1
+            if view["ui"] == "switch":
+                switches_total += 1
+                if current is True:
+                    switches_on += 1
+        total_gated += gated_total
+        sources_out.append({
+            "index": idx, "name": name, "namespace": ns,
+            "natural_namespace": natural.get(name),
+            "config_id": sid, "settings": settings,
+            "files_gated": gated_total,
+        })
+        namespaces_out.append({
+            "source": name, "namespace": ns,
+            "natural": natural.get(name),
+            "entries": len(settings), "files_gated": gated_total,
+        })
+    return {
+        "sources": sources_out,
+        "namespaces": namespaces_out,
+        "unscanned": unscanned,
+        "stats": {"settings": total_settings,
+                  "configs": len(sources_out),
+                  "files_gated": total_gated,
+                  "switches_on": switches_on,
+                  "switches_total": switches_total},
+        "pending_count": pending_count,
+    }
+
+
+def wb_rpo_matching_sources(source_name):
+    """Full-list indices of enabled sources with this name."""
+    st = load_state()
+    srcs = st.get("sources", [])
+    return [i for i, s in enumerate(srcs)
+            if s.get("enabled", True)
+            and (s.get("name") or ("source-%d" % i)) == source_name]
+
+
+def _wb_rpo_name_exists(source_name):
+    """True if any source (enabled or not) carries this name."""
+    st = load_state()
+    return any((s.get("name") or ("source-%d" % i)) == source_name
+               for i, s in enumerate(st.get("sources", [])))
+
+
+def wb_rpo_set(source_name, key, value):
+    """Set a pending value. Returns (payload, error, status)."""
+    matches = wb_rpo_matching_sources(source_name)
+    if not matches:
+        if _wb_rpo_name_exists(source_name):
+            return None, ("source is disabled; enable it first to change "
+                           "its settings"), 404
+        return None, "unknown source", 404
+    if len(matches) > 1:
+        return None, ("That source shares its name with another source; "
+                       "rename it first to change this setting."), 400
+    report = wb_rpo_scan()
+    entry_src = next((s for s in report["sources"]
+                      if s["name"] == source_name), None)
+    if entry_src is None:
+        return None, "source has no Respackopts settings", 404
+    item = next((t for t in entry_src["settings"] if t["key"] == key), None)
+    if item is None:
+        return None, "unknown setting", 404
+    err = wb_rpo_validate(item, value)
+    if err:
+        return None, err, 400
+    st = load_state()
+    baked = st.get("wb_rpo_baked", {}) or {}
+    baseline = (baked.get(source_name, {}) or {}).get(key, item["default"])
+    pending = st.setdefault("wb_rpo_pending", {})
+    if _wb_rpo_eq(value, baseline):
+        if source_name in pending:
+            pending[source_name].pop(key, None)
+            if not pending[source_name]:
+                del pending[source_name]
+    else:
+        pending.setdefault(source_name, {})[key] = value
+    save_state(st)
+    return {"ok": True, "report": wb_rpo_scan()}, None, 200
+
+
+def wb_rpo_discard():
+    """Drop all pending values (baked values and renames untouched)."""
+    st = load_state()
+    st["wb_rpo_pending"] = {}
+    save_state(st)
+    return {"ok": True, "report": wb_rpo_scan()}
+
+
+def wb_rpo_rename(source_name, namespace):
+    """Rename a pack's RPO namespace. Returns (payload, error, status)."""
+    ns = (namespace or "").strip().lower()
+    if not re.fullmatch(r"[a-z0-9_]+", ns or ""):
+        return None, ("Namespaces use lowercase letters, numbers, and "
+                       "underscores only."), 400
+    matches = wb_rpo_matching_sources(source_name)
+    if not matches:
+        if _wb_rpo_name_exists(source_name):
+            return None, ("source is disabled; enable it first to rename "
+                           "its namespace"), 404
+        return None, "unknown source", 404
+    if len(matches) > 1:
+        return None, ("That source shares its name with another source; "
+                       "rename it first to rename this namespace."), 400
+    report = wb_rpo_scan()
+    entry_src = next((s for s in report["sources"]
+                      if s["name"] == source_name), None)
+    if entry_src is None:
+        return None, "source has no Respackopts config", 404
+    others = [n["namespace"] for n in report["namespaces"]
+              if n["source"] != source_name]
+    if ns in others:
+        return None, "That namespace is already used by another config.", 400
+    st = load_state()
+    renames = st.setdefault("wb_rpo_namespaces", {})
+    # Input is force-lowercased (demo validation), while natural
+    # categories are camelCase ("rPOAlpha"), so compare lowercased:
+    # typing the natural name in any case removes the override.
+    if ns == (entry_src["natural_namespace"] or "").lower():
+        renames.pop(source_name, None)
+    else:
+        renames[source_name] = ns
+    save_state(st)
+    return {"ok": True, "report": wb_rpo_scan()}, None, 200
+
+
+def wb_rpo_consume_pending():
+    """After a successful workbench build, pending values are baked:
+    they become the new baseline and pending clears. Best-effort: on
+    any scan failure pending is left intact rather than lost."""
+    try:
+        report = wb_rpo_scan()
+    except Exception:
+        return
+    st = load_state()
+    baked = {}
+    for src in report["sources"]:
+        vals = {}
+        for t in src["settings"]:
+            vals[t["key"]] = t["value"]
+        if vals:
+            baked[src["name"]] = vals
+    st["wb_rpo_baked"] = baked
+    st["wb_rpo_pending"] = {}
+    save_state(st)
+
+
 # ---------------------------------------------------------------- server
 class Handler(BaseHTTPRequestHandler):
     server_version = "packmerge-web/1.0"
@@ -1332,6 +1789,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(open_output_folder())
         if parsed.path == "/api/wb/conflicts":
             return self._json(wb_scan_conflicts())
+        if parsed.path == "/api/wb/rpo":
+            return self._json(wb_rpo_scan())
         if parsed.path == "/api/wb/conflicts/diff":
             q = urllib.parse.parse_qs(parsed.query)
             path = (q.get("path") or [""])[0]
@@ -1535,6 +1994,41 @@ class Handler(BaseHTTPRequestHandler):
             if err:
                 return self._json({"ok": False, "error": err}, status)
             return self._json(report)
+        if parsed.path == "/api/wb/rpo/discard":
+            return self._json(wb_rpo_discard())
+        if parsed.path == "/api/wb/rpo/set":
+            try:
+                data = json.loads(body)
+            except Exception:
+                return self._json({"ok": False,
+                                   "error": "invalid JSON"}, 400)
+            if not isinstance(data, dict) or not data.get("source") \
+                    or not data.get("setting") or "value" not in data:
+                return self._json(
+                    {"ok": False,
+                     "error": "source, setting, and value are required"},
+                    400)
+            payload, err, status = wb_rpo_set(
+                data["source"], data["setting"], data["value"])
+            if err:
+                return self._json({"ok": False, "error": err}, status)
+            return self._json(payload)
+        if parsed.path == "/api/wb/rpo/namespace":
+            try:
+                data = json.loads(body)
+            except Exception:
+                return self._json({"ok": False,
+                                   "error": "invalid JSON"}, 400)
+            if not isinstance(data, dict) or not data.get("source") \
+                    or "namespace" not in data:
+                return self._json(
+                    {"ok": False,
+                     "error": "source and namespace are required"}, 400)
+            payload, err, status = wb_rpo_rename(
+                data["source"], data["namespace"])
+            if err:
+                return self._json({"ok": False, "error": err}, status)
+            return self._json(payload)
         self.send_error(404)
 
     def do_DELETE(self):

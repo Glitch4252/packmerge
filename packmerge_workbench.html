@@ -3055,5 +3055,359 @@
 })();
 
 </script>
+<script>
+/* ================= Packmerge 2.0 — slice 3: real RPO Toggles =================
+   Replaces the RPO tab's demo data with live data from the /api/wb/rpo
+   endpoints. Other tabs keep their behavior; Discover and Activity stay
+   demo in this slice. Demo globals reused: el, toast, showView,
+   syncRpoBadge, syncQueueUI. The demo's RPO rows are rebuilt from real
+   data, so demo listeners on them die with the old nodes; persistent
+   buttons (Merge to apply, Reset) are clone-rebound once. */
+(function(){
+  "use strict";
+  function rpoApi(method, path, body){
+    return fetch(path, {
+      method: method,
+      headers: {"Content-Type": "application/json"},
+      body: body === undefined ? undefined : JSON.stringify(body)
+    }).then(function(r){
+      return r.json().then(function(j){
+        if(!r.ok) throw new Error((j && j.error) || ("request failed: " + path));
+        return j;
+      });
+    });
+  }
+  function esc(s){
+    return String(s == null ? "" : s).replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+  function fmtNum(n){ return Number(n).toLocaleString("en-US"); }
+
+  var rpoReport = null;
+  var rpoRealPending = 0;
+  // Demo meta paths (queue row, badge) read rpoPendingCount(); point it
+  // at the real count so they stay truthful after this script loads.
+  window.rpoPendingCount = function(){ return rpoRealPending; };
+  window.updateRpoMeta = function(){ refreshRPO(); };
+
+  function rebind(id, fn){
+    var b = el(id); if(!b) return;
+    var c = b.cloneNode(true); b.parentNode.replaceChild(c, b);
+    c.addEventListener("click", fn);
+  }
+
+  function controlHtml(g, t){
+    if(t.ui === "switch"){
+      return '<label class="switch"><input type="checkbox" data-rpo-set data-source="'
+        + esc(g.name) + '" data-key="' + esc(t.key) + '" '
+        + (t.value === true ? "checked" : "") + '><span class="track"></span></label>';
+    }
+    if(t.ui === "dropdown"){
+      var opts = (t.values || []).map(function(o, i){
+        return '<option value="' + i + '"' + (o === t.value ? " selected" : "") + ">"
+          + esc(o) + "</option>";
+      }).join("");
+      return '<select class="rpo-select" data-rpo-set data-source="' + esc(g.name)
+        + '" data-key="' + esc(t.key) + '">' + opts + "</select>";
+    }
+    if(t.ui === "slider"){
+      if(t.min != null && t.max != null){
+        return '<span class="rpo-range"><input type="range" data-rpo-set data-source="'
+          + esc(g.name) + '" data-key="' + esc(t.key) + '" min="' + t.min + '" max="'
+          + t.max + '" step="' + (t.step != null ? t.step : 1) + '" value="' + t.value
+          + '" aria-label="' + esc(t.label) + '"><b data-range-val="' + esc(g.name) + ":"
+          + esc(t.key) + '">' + t.value + (t.unit || "") + "</b></span>";
+      }
+      return '<input type="number" class="rpo-number" data-rpo-set data-source="'
+        + esc(g.name) + '" data-key="' + esc(t.key) + '" value="' + t.value
+        + '" aria-label="' + esc(t.label) + '">';
+    }
+    if(t.ui === "text"){
+      return '<input type="text" class="rpo-text" data-rpo-set data-source="'
+        + esc(g.name) + '" data-key="' + esc(t.key) + '" value="' + esc(t.value)
+        + '" aria-label="' + esc(t.label) + '">';
+    }
+    return '<span class="dim">' + esc(JSON.stringify(t.value)) + "</span>";
+  }
+
+  function typeLabel(t){
+    if(t.ui === "switch") return "SWITCH";
+    if(t.ui === "dropdown") return "LIST";
+    if(t.ui === "slider") return "NUMBER";
+    if(t.ui === "text") return "TEXT";
+    return "SET";
+  }
+
+  function rowHtml(g, t, gi, ii){
+    var on = t.ui === "switch" ? (t.value === true ? "on" : "off") : "set";
+    var condHtml = "";
+    (t.conditions || []).forEach(function(c){
+      condHtml += '<div class="cond">' + esc(c.rpo) + " → " + esc(c.condition) + "</div>";
+      (c.governed || []).forEach(function(p){
+        condHtml += '<div class="gpath">' + esc(p) + "</div>";
+      });
+      if(c.governed_count > (c.governed || []).length){
+        condHtml += '<div class="gpath dim">… and '
+          + fmtNum(c.governed_count - (c.governed || []).length)
+          + " more files with the same condition</div>";
+      }
+    });
+    if(!condHtml) condHtml = '<div class="gpath dim">No .rpo condition references this setting.</div>';
+    var wrap = document.createElement("div");
+    wrap.className = "toggle-wrap";
+    wrap.setAttribute("data-rpo-row", "");
+    wrap.setAttribute("data-gi", gi);
+    wrap.setAttribute("data-ii", ii);
+    wrap.setAttribute("data-search", (t.label + " " + t.key + " " + g.name + " " + g.namespace).toLowerCase());
+    wrap.setAttribute("data-on", on);
+    var rowEl = document.createElement("div");
+    rowEl.className = "toggle-row";
+    rowEl.innerHTML = '<div class="m"><div class="n">' + esc(t.label)
+      + '<span class="key">' + esc(t.key) + '</span><span class="pill kind" style="margin-left:8px">'
+      + typeLabel(t) + "</span>"
+      + (t.pending ? '<span class="pill warn" style="margin-left:8px">PENDING</span>' : "")
+      + '</div><div class="d">' + esc(t.tooltip || "") + "</div></div>"
+      + '<span class="files">' + fmtNum(t.files_gated) + " files gated</span>"
+      + '<button class="btn small ghost" data-rpo-files>Files</button>'
+      + controlHtml(g, t);
+    wrap.appendChild(rowEl);
+    var gated = document.createElement("div");
+    gated.className = "gated";
+    gated.setAttribute("data-gated", gi + ":" + ii);
+    gated.innerHTML = condHtml;
+    wrap.appendChild(gated);
+    return wrap;
+  }
+
+  function renderNamespaces(report){
+    var wrap = el("nsList"); if(!wrap) return;
+    wrap.innerHTML = "";
+    (report.namespaces || []).forEach(function(n){
+      var row = document.createElement("div");
+      row.className = "ns-row";
+      row.innerHTML = '<span class="ns-name">' + esc(n.namespace) + '</span>'
+        + '<span class="ns-meta">' + esc(n.source) + " · " + n.entries + " entries · "
+        + fmtNum(n.files_gated) + " gated files</span>"
+        + '<button class="btn small ghost" data-rpo-rename data-source="' + esc(n.source) + '">Rename</button>';
+      wrap.appendChild(row);
+    });
+    wrap.querySelectorAll("[data-rpo-rename]").forEach(function(b){
+      b.addEventListener("click", function(){
+        var row = b.parentElement, src = b.getAttribute("data-source");
+        var cur = row.querySelector(".ns-name").textContent;
+        row.innerHTML = '<input class="ns-input" type="text" value="' + esc(cur)
+          + '" aria-label="Namespace name">'
+          + '<span class="ns-meta">' + esc(src) + "</span>"
+          + '<button class="btn small accent" data-rpo-save>Save</button>'
+          + '<button class="btn small ghost" data-rpo-cancel>Cancel</button>';
+        var input = row.querySelector(".ns-input");
+        input.focus(); input.select();
+        row.querySelector("[data-rpo-cancel]").addEventListener("click", function(){ renderNamespaces(report); });
+        row.querySelector("[data-rpo-save]").addEventListener("click", function(){
+          var v = input.value.trim().toLowerCase();
+          if(!/^[a-z0-9_]+$/.test(v)){
+            toast("Namespaces use lowercase letters, numbers, and underscores only.");
+            return;
+          }
+          rpoApi("POST", "/api/wb/rpo/namespace", {source: src, namespace: v})
+            .then(function(d){ applyReport(d.report, "Namespace renamed to " + v + "."); })
+            .catch(function(e){ toast(e.message); });
+        });
+      });
+    });
+  }
+
+  function applyReport(report, msg){
+    rpoReport = report;
+    rpoRealPending = report.pending_count || 0;
+    renderRPO(report);
+    if(msg) toast(msg);
+  }
+
+  function refreshRPO(){
+    return rpoApi("GET", "/api/wb/rpo").then(function(d){
+      applyReport(d);
+    }).catch(function(){
+      var f = el("rpoFull");
+      if(f) f.innerHTML = '<div class="empty">Couldn\'t load RPO settings — is the server running?</div>';
+    });
+  }
+
+  function renderRPO(report){
+    var stats = report.stats || {};
+    if(el("statRpoTotal")) el("statRpoTotal").textContent = String(stats.settings || 0);
+    if(el("statRpoConfigs")) el("statRpoConfigs").textContent = String(stats.configs || 0);
+    if(el("statRpoOn")) el("statRpoOn").textContent = (stats.switches_on || 0) + " of " + (stats.switches_total || 0);
+    if(el("statRpoFiles")) el("statRpoFiles").textContent = fmtNum(stats.files_gated || 0);
+    if(el("statRpoPending")) el("statRpoPending").textContent = String(report.pending_count || 0);
+    var bar = el("rpoPending");
+    if(bar){
+      bar.style.display = report.pending_count ? "flex" : "none";
+      el("rpoPendingText").textContent = report.pending_count + " change" + (report.pending_count === 1 ? "" : "s");
+      if(!el("rpoDiscardBtn")){
+        var db = document.createElement("button");
+        db.className = "btn small ghost";
+        db.id = "rpoDiscardBtn";
+        db.textContent = "Discard changes";
+        db.addEventListener("click", function(){
+          rpoApi("POST", "/api/wb/rpo/discard", {}).then(function(d){
+            applyReport(d.report, "Pending RPO changes discarded.");
+          }).catch(function(e){ toast(e.message); });
+        });
+        bar.appendChild(db);
+      }
+    }
+    var f = el("rpoFull");
+    if(f){
+      f.innerHTML = "";
+      if(!(report.sources || []).length){
+        f.innerHTML = '<div class="empty">No Respackopts settings found — add a pack with a respackopts.json5 config.</div>';
+      }
+      (report.sources || []).forEach(function(g, gi){
+        var box = document.createElement("div");
+        box.className = "rpo-group";
+        box.setAttribute("data-rpo-group", g.name);
+        var on = 0, bools = 0, files = 0;
+        g.settings.forEach(function(t){
+          files += t.files_gated;
+          if(t.ui === "switch"){ bools++; if(t.value === true) on++; }
+        });
+        var head = document.createElement("div");
+        head.className = "gh";
+        head.innerHTML = '<span class="n">' + esc(g.name) + '</span><span class="badge rpo">RESPACKOPTS</span>'
+          + '<span class="ns">namespace: ' + esc(g.namespace) + "</span>"
+          + '<span class="gsum" data-gsum="' + gi + '">' + on + " of " + bools
+          + " switches on · " + fmtNum(files) + " files gated</span>"
+          + '<label class="gmaster"><span>All</span><span class="switch"><input type="checkbox" data-rpo-master="'
+          + gi + '"' + (bools && on === bools ? " checked" : "") + '><span class="track"></span></span></label>';
+        box.appendChild(head);
+        g.settings.forEach(function(t, ii){ box.appendChild(rowHtml(g, t, gi, ii)); });
+        f.appendChild(box);
+      });
+    }
+    renderNamespaces(report);
+    // Controls on the freshly built rows.
+    document.querySelectorAll("input[data-rpo-set][type=checkbox]").forEach(function(cb){
+      cb.addEventListener("change", function(){
+        setSetting(cb.getAttribute("data-source"), cb.getAttribute("data-key"), cb.checked, cb);
+      });
+    });
+    document.querySelectorAll("select[data-rpo-set]").forEach(function(sel){
+      sel.addEventListener("change", function(){
+        var g = (report.sources || []).find(function(s){ return s.name === sel.getAttribute("data-source"); });
+        var t = g && g.settings.find(function(x){ return x.key === sel.getAttribute("data-key"); });
+        var v = t ? t.values[parseInt(sel.value, 10)] : sel.value;
+        setSetting(sel.getAttribute("data-source"), sel.getAttribute("data-key"), v, sel);
+      });
+    });
+    document.querySelectorAll("input[data-rpo-set][type=range]").forEach(function(rg){
+      rg.addEventListener("input", function(){
+        var out = rg.parentElement.querySelector("b");
+        if(out){
+          var g = (report.sources || []).find(function(s){ return s.name === rg.getAttribute("data-source"); });
+          var t = g && g.settings.find(function(x){ return x.key === rg.getAttribute("data-key"); });
+          out.textContent = rg.value + ((t && t.unit) || "");
+        }
+      });
+      rg.addEventListener("change", function(){
+        setSetting(rg.getAttribute("data-source"), rg.getAttribute("data-key"), parseFloat(rg.value), rg);
+      });
+    });
+    document.querySelectorAll("input[data-rpo-set][type=number]").forEach(function(inp){
+      inp.addEventListener("change", function(){
+        setSetting(inp.getAttribute("data-source"), inp.getAttribute("data-key"), parseFloat(inp.value), inp);
+      });
+    });
+    document.querySelectorAll("input[data-rpo-set][type=text]").forEach(function(inp){
+      inp.addEventListener("change", function(){
+        setSetting(inp.getAttribute("data-source"), inp.getAttribute("data-key"), inp.value, inp);
+      });
+    });
+    document.querySelectorAll("button[data-rpo-files]").forEach(function(b){
+      b.addEventListener("click", function(){
+        var wrap = b.closest(".toggle-wrap"); if(!wrap) return;
+        var panel = wrap.querySelector(".gated");
+        var open = panel.classList.toggle("on");
+        b.textContent = open ? "Hide" : "Files";
+      });
+    });
+    document.querySelectorAll("input[data-rpo-master]").forEach(function(m){
+      m.addEventListener("change", function(){
+        var gi = parseInt(m.getAttribute("data-rpo-master"), 10);
+        var g = (report.sources || [])[gi]; if(!g) return;
+        var bools = g.settings.filter(function(t){ return t.ui === "switch"; });
+        var chain = Promise.resolve();
+        bools.forEach(function(t){
+          chain = chain.then(function(){
+            return rpoApi("POST", "/api/wb/rpo/set", {source: g.name, setting: t.key, value: m.checked}).catch(function(){});
+          });
+        });
+        chain.then(function(){
+          refreshRPO().then(function(){
+            toast("All " + g.name + " switches turned " + (m.checked ? "on" : "off") + " — applies to the next build.");
+          });
+        });
+      });
+    });
+    // Demo search/filter chips read these DOM attributes, so they keep
+    // working on the rebuilt rows.
+    if(typeof applyRpoFilters === "function") applyRpoFilters();
+    if(typeof syncRpoBadge === "function") syncRpoBadge();
+    if(typeof syncQueueUI === "function") syncQueueUI();
+  }
+
+  function setSetting(source, key, value, ctl){
+    rpoApi("POST", "/api/wb/rpo/set", {source: source, setting: key, value: value})
+      .then(function(d){
+        applyReport(d.report);
+        toast("Setting updated — applies to the next build.");
+      })
+      .catch(function(e){
+        toast(e.message);
+        refreshRPO();
+      });
+  }
+
+  rebind("rpoRebuildBtn", function(){ showView("workbench"); el("buildBtn").click(); });
+  rebind("rpoResetBtn", function(){
+    rpoApi("POST", "/api/wb/rpo/discard", {}).then(function(d){
+      applyReport(d.report, "Pending RPO changes discarded.");
+    }).catch(function(e){ toast(e.message); });
+  });
+  document.querySelectorAll(".navitem").forEach(function(n){
+    n.addEventListener("click", function(){
+      var v = n.getAttribute("data-view");
+      if(v === "rpo" || v === "workbench") refreshRPO();
+    });
+  });
+  /* After a build/check finishes, pending may have been consumed, so
+     refresh RPO (badge, pending bar, queue row). Slice-1's completion
+     handler is IIFE-scoped, so watch the log read-only until done. */
+  var buildWatch = null;
+  function watchBuild(){
+    if(buildWatch) clearInterval(buildWatch);
+    buildWatch = setInterval(function(){
+      rpoApi("GET", "/api/log").then(function(d){
+        if(d.done){
+          clearInterval(buildWatch); buildWatch = null;
+          refreshRPO();
+        }
+      }).catch(function(){});
+    }, 1000);
+  }
+  ["buildBtn", "checkBtn"].forEach(function(id){
+    var b = el(id);
+    if(b) b.addEventListener("click", function(){ setTimeout(watchBuild, 500); });
+  });
+
+  var f0 = el("rpoFull");
+  if(f0) f0.innerHTML = '<div class="empty">Loading RPO settings…</div>';
+  var ns0 = el("nsList");
+  if(ns0) ns0.innerHTML = "";
+  refreshRPO();
+  window.wbRefreshRPO = refreshRPO;
+})();
+
+</script>
 </body>
 </html>
