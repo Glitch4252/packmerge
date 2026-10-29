@@ -865,17 +865,27 @@
           <div class="topbar"><div><h1>Discover</h1><div class="sub">Search Modrinth for resource packs and data packs. Subscribing downloads a pack, adds it to Sources, and enables automatic update checks.</div></div></div>
           <div class="searchbar">
             <input type="text" id="discSearch" placeholder="Search Modrinth packs…  try “dark” or “anim”" aria-label="Search Modrinth packs">
-            <button class="btn ghost" id="collectionBtn">Import collection URL…</button>
           </div>
           <div class="disc-toolbar" role="group" aria-label="Discover filters and sorting">
             <label class="filter-field"><span>Category</span>
               <select id="discCategory" class="rpo-select">
                 <option value="all">All categories</option>
-                <option value="GUI">GUI</option>
-                <option value="Animation">Animation</option>
-                <option value="World generation">World generation</option>
-                <option value="Structures">Structures</option>
-                <option value="Font &amp; style">Font &amp; style</option>
+                <option value="gui">GUI</option>
+                <option value="fonts">Font</option>
+                <option value="blocks">Blocks</option>
+                <option value="items">Items</option>
+                <option value="entities">Entities</option>
+                <option value="models">Models</option>
+                <option value="environment">Environment</option>
+                <option value="audio">Audio</option>
+                <option value="decoration">Decoration</option>
+                <option value="equipment">Equipment</option>
+                <option value="utility">Utility</option>
+                <option value="worldgen">World generation</option>
+                <option value="adventure">Adventure</option>
+                <option value="game-mechanics">Game mechanics</option>
+                <option value="mobs">Mobs</option>
+                <option value="technology">Technology</option>
               </select>
             </label>
             <label class="filter-field"><span>Pack type</span>
@@ -1044,16 +1054,11 @@
           {key:"animSpeed", label:"Animation speed", desc:"Playback speed multiplier for entity and item animations.", type:"number", min:0.5, max:2, step:0.25, value:1, unit:"×", files:306, samples:["assets/minecraft/optifine/cem/zombie.jem","assets/minecraft/optifine/cem/skeleton.jem"]},
           {key:"experimentalTrails", label:"Experimental trails", desc:"Particle trails on projectiles. Author marked unstable.", files:12, on:false, samples:["assets/minecraft/particles/trail.png","assets/minecraft/optifine/cem/arrow.jem"]}]}
       ];
-      /* Discover only ever queries Modrinth's resourcepack and datapack
-         project types — shader packs are excluded at the query level
-         because their files can't be merged like resource/data packs. */
-      var discover = [
-        {name:"Dark GUI", author:"nebulr", type:"RP", seed:"darkgui", dl:"2.1M downloads", dlNum:2100000, follows:"38K", cat:"GUI", versions:["1.21.4","1.21","1.20.4"], updatedDays:9, createdDays:640, desc:"A darker, flatter take on the vanilla GUI. Pairs well with a dark-mode toggle pack.", sub:false},
-        {name:"Animated Items+", author:"packworks", type:"RP", seed:"animplus", dl:"640K downloads", dlNum:640000, follows:"9.4K", cat:"Animation", versions:["1.21.4"], updatedDays:1, createdDays:95, desc:"Every tool and weapon gets a subtle idle animation via Respackopts conditions.", sub:false},
-        {name:"Structory", author:"Vooglam", type:"DP", seed:"structory", dl:"3.4M downloads", dlNum:3400000, follows:"61K", cat:"Structures", versions:["1.21.4","1.21"], updatedDays:21, createdDays:820, desc:"Small atmospheric structures scattered through the world. Pure data pack — tags union cleanly.", sub:false},
-        {name:"Cozy Tweaks", author:"mintleaf", type:"RP", seed:"cozy", dl:"210K downloads", dlNum:210000, follows:"3.1K", cat:"Font & style", versions:["1.20.4"], updatedDays:44, createdDays:210, desc:"Warped wood palette, softer fonts, and rounded containers.", sub:false},
-        {name:"Nullscape", author:"Starmute", type:"DP", seed:"nullscape", dl:"5.9M downloads", dlNum:5900000, follows:"88K", cat:"World generation", versions:["1.21.4","1.21"], updatedDays:5, createdDays:1100, desc:"End dimension overhaul, ~100× larger islands. Namespace: nullscape.", sub:false}
-      ];
+      /* Discover is server-driven since slice 4: the demo result list
+         is gone. This array stays empty so the pre-slice-4 render
+         (which runs once at load) shows no demo cards before the real
+         search replaces it. */
+      var discover = [];
 
       /* ================= pixel-texture painter ================= */
       function hashStr(s){var h=2166136261;for(var i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619)}return h>>>0}
@@ -2099,7 +2104,6 @@
       });
       el("discoverBtn").addEventListener("click",function(){showView("discover")});
       el("clearBtn").addEventListener("click",function(){toast("Clear removes all sources from the list. Saved overrides are retained.")});
-      el("collectionBtn").addEventListener("click",function(){toast("Import a Modrinth collection to subscribe to all included packs at once.")});
       el("appUpdateBtn").addEventListener("click",function(){toast("Packmerge is up to date (v2.1.1). This checks the app itself — pack updates live in Activity.")});
       document.querySelectorAll("[data-browse-output]").forEach(function(b){
         b.addEventListener("click",function(){ toast("Downloads folder opened — "+packOutputFile()+" (48.2 MB) is the latest output."); });
@@ -2601,6 +2605,7 @@
   refresh().catch(function(){
     if(sl) sl.innerHTML = '<div class="empty">Couldn\'t load sources — is the server running?</div>';
   });
+  window.wbRefreshSources = refresh;
 })();
 
 </script>
@@ -3406,6 +3411,199 @@
   if(ns0) ns0.innerHTML = "";
   refreshRPO();
   window.wbRefreshRPO = refreshRPO;
+})();
+
+</script>
+<script>
+/* ================= Packmerge 2.0 — slice 4: real Discover =================
+   Replaces the Discover tab's demo data with live Modrinth search and
+   real subscriptions. Other tabs keep their behavior; Activity stays
+   demo (slice 5). Demo globals reused: el, toast, paintAll. The demo's
+   Discover listeners were attached per-element at load, so the filter
+   controls are clone-replaced once to strip them (values preserved);
+   the demo's result cards die with the re-render. Data packs are
+   Modrinth "mod" projects carrying the "datapack" category — the
+   server normalizes that to pack_type "datapack", and the cards below
+   trust the server's pack_type, never the raw project type. */
+(function(){
+  "use strict";
+  function discApi(method, path, body){
+    return fetch(path, {
+      method: method,
+      headers: {"Content-Type": "application/json"},
+      body: body === undefined ? undefined : JSON.stringify(body)
+    }).then(function(r){
+      return r.json().then(function(j){
+        if(!r.ok) throw new Error((j && j.error) || ("request failed: " + path));
+        return j;
+      });
+    });
+  }
+  function esc(s){
+    return String(s == null ? "" : s).replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+  function fmtCount(n){
+    if(n >= 1000000) return (n / 1000000).toFixed(1).replace(/\.0$/, "") + "M";
+    if(n >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, "") + "K";
+    return String(n);
+  }
+  function fmtDays(iso){
+    try{
+      var d = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+      if(d < 0) return "";
+      if(d === 0) return "today";
+      return d + "d ago";
+    }catch(e){ return ""; }
+  }
+  /* Platform tags, not content categories: Modrinth lists data packs
+     under loader/platform categories that mean nothing for a pack
+     filter, so they are hidden from the card's category line. */
+  var HIDDEN_CATS = ["minecraft", "datapack", "fabric", "forge", "neoforge",
+                     "quilt", "bukkit", "spigot", "paper", "purpur", "folia"];
+  function catLine(cats){
+    return (cats || []).filter(function(c){
+      return HIDDEN_CATS.indexOf(c) < 0;
+    }).slice(0, 3).map(function(c){
+      return c.charAt(0).toUpperCase() + c.slice(1).replace(/-/g, " ");
+    }).join(" · ");
+  }
+  function verLine(vers){
+    vers = vers || [];
+    var shown = vers.slice(0, 3).join(", ");
+    if(vers.length > 3) shown += " +" + (vers.length - 3) + " more";
+    return shown;
+  }
+
+  var discTimer = null, discSeq = 0;
+
+  function cardEl(r){
+    var card = document.createElement("div"); card.className = "disc";
+    var banner = r.icon_url
+      ? '<img src="' + esc(r.icon_url) + '" alt="" style="width:100%;height:100%;object-fit:cover;display:block">'
+      : '<canvas class="pix" data-seed="' + esc(r.slug) + '" width="32" height="12"></canvas>';
+    var cats = catLine(r.categories);
+    var vers = verLine(r.versions);
+    var updated = fmtDays(r.date_modified);
+    var meta = (cats ? cats + " · " : "") + "MC " + esc(vers)
+      + (updated ? " · updated " + updated : "");
+    card.innerHTML = '<div class="banner">' + banner + '</div>'
+      + '<div class="b"><div class="n">' + esc(r.title) + ' <span class="badge '
+      + (r.pack_type === "datapack" ? "dp" : "rp") + '">'
+      + (r.pack_type === "datapack" ? "DATA" : "RESOURCE") + '</span></div>'
+      + '<div class="a">by ' + esc(r.author) + ' · Modrinth</div>'
+      + '<div class="d">' + esc(r.description) + '</div>'
+      + '<div class="meta-line">' + esc(meta) + '</div>'
+      + '<div class="f"><span class="dl">' + fmtCount(r.downloads)
+      + ' downloads · ' + fmtCount(r.follows) + ' follows</span>'
+      + '<button class="btn small ' + (r.subscribed ? "ghost" : "accent")
+      + '" style="margin-left:auto" data-disc-sub>'
+      + (r.subscribed ? "✓ Subscribed" : "Subscribe") + '</button></div></div>';
+    var btn = card.querySelector("[data-disc-sub]");
+    btn.addEventListener("click", function(){
+      btn.disabled = true;
+      var wasSub = r.subscribed;
+      var path = wasSub ? "/api/wb/discover/unsubscribe"
+                        : "/api/wb/discover/subscribe";
+      discApi("POST", path, {slug: r.slug}).then(function(d){
+        if(d.already){
+          toast(r.title + " is already subscribed.");
+        } else if(wasSub){
+          toast(r.title + " unsubscribed and removed from Sources.");
+        } else if(d.downloaded === false){
+          toast(r.title + " subscribed, but the download failed ("
+            + (d.download_error || "unknown error")
+            + ") — it will retry on the next build.");
+        } else {
+          toast(r.title + " subscribed. The pack has been downloaded and added to Sources.");
+        }
+        if(typeof window.wbRefreshSources === "function"){
+          window.wbRefreshSources().catch(function(){});
+        }
+        refreshSubBadge();
+        renderDiscoverReal();
+      }).catch(function(e){
+        toast(e.message);
+        btn.disabled = false;
+      });
+    });
+    return card;
+  }
+
+  function renderDiscoverReal(){
+    var grid = el("discGrid"); if(!grid) return;
+    var seq = ++discSeq;
+    grid.innerHTML = '<p class="hint">Searching Modrinth…</p>';
+    var countEl = el("discCount"); if(countEl) countEl.textContent = "";
+    var qs = "query=" + encodeURIComponent(el("discSearch").value)
+      + "&pack_type=" + encodeURIComponent(el("discPackType").value)
+      + "&category=" + encodeURIComponent(el("discCategory").value)
+      + "&version=" + encodeURIComponent(el("discVersion").value)
+      + "&sort=" + encodeURIComponent(el("discSort").value);
+    discApi("GET", "/api/wb/discover/search?" + qs).then(function(d){
+      if(seq !== discSeq) return;
+      var total = d.total, list = d.results || [];
+      if(countEl){
+        countEl.textContent = total > list.length
+          ? ("Showing " + list.length + " of "
+             + total.toLocaleString("en-US") + " results")
+          : (total + " result" + (total === 1 ? "" : "s"));
+      }
+      grid.innerHTML = "";
+      if(!list.length){
+        grid.innerHTML = d.shader_query
+          ? '<p class="hint">Discover doesn\'t list shader packs — try a resource or data pack.</p>'
+          : '<p class="hint">No results match the current search and filters.</p>';
+        return;
+      }
+      list.forEach(function(r){ grid.appendChild(cardEl(r)); });
+      paintAll(grid);
+    }).catch(function(e){
+      if(seq !== discSeq) return;
+      if(countEl) countEl.textContent = "";
+      grid.innerHTML = '<p class="hint">Couldn\'t reach Modrinth: '
+        + esc(e.message) + '</p>'
+        + '<button class="btn small" id="discRetry">Try again</button>';
+      var rb = el("discRetry");
+      if(rb) rb.addEventListener("click", renderDiscoverReal);
+    });
+  }
+
+  /* The Discover nav badge counts real subscriptions only and hides
+     at zero: it starts badgeless and appears only after the user
+     subscribes to something themselves. */
+  function refreshSubBadge(){
+    discApi("GET", "/api/wb/state").then(function(v){
+      var b = el("navSubCount"); if(!b) return;
+      var n = v.subscription_count || 0;
+      b.textContent = n ? String(n) : "";
+      b.style.display = n ? "" : "none";
+    }).catch(function(){});
+  }
+  window.renderDiscover = renderDiscoverReal;
+  window.syncSubBadge = refreshSubBadge;
+
+  /* Strip the demo's per-element listeners by clone-replacing the
+     filter controls (values preserved), then attach the real ones. */
+  function rebindDisc(id, event, fn){
+    var old = el(id); if(!old) return;
+    var val = old.value;
+    var c = old.cloneNode(true); old.parentNode.replaceChild(c, old);
+    c.value = val;
+    c.addEventListener(event, fn);
+  }
+  function scheduleSearch(){
+    clearTimeout(discTimer);
+    discTimer = setTimeout(renderDiscoverReal, 300);
+  }
+  rebindDisc("discSearch", "input", scheduleSearch);
+  ["discCategory", "discPackType", "discVersion", "discSort"].forEach(
+    function(id){ rebindDisc(id, "change", renderDiscoverReal); });
+  document.querySelectorAll(".navitem").forEach(function(n){
+    n.addEventListener("click", refreshSubBadge);
+  });
+  refreshSubBadge();
+  renderDiscoverReal();
 })();
 
 </script>

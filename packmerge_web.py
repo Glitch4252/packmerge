@@ -253,6 +253,29 @@ def wb_modrinth_project(slug):
         return json.loads(r.read().decode("utf-8"))
 
 
+def wb_modrinth_newest_loaders(slug):
+    """Loaders of a project's newest version ([] on any failure).
+
+    The project endpoint does NOT mark data packs: a data pack's
+    project_type is "mod" and its categories lack "datapack" (verified
+    live for Terralith and Structory). The version loaders are the
+    marker: data-pack versions carry loader "datapack", resource-pack
+    versions loader "minecraft"."""
+    try:
+        req = urllib.request.Request(
+            MODRINTH_API + "/project/" + urllib.parse.quote(slug)
+            + "/version",
+            headers={"User-Agent": "packmerge-workbench/2.0"})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            versions = json.loads(r.read().decode("utf-8"))
+    except Exception:
+        return []
+    if not versions:
+        return []
+    versions.sort(key=lambda v: v.get("date_published", ""), reverse=True)
+    return versions[0].get("loaders") or []
+
+
 def wb_inspect_zip(path):
     """Return (file_count, pack_type) for a zip, or (None, 'unknown').
 
@@ -297,6 +320,7 @@ def wb_source_view(i, s):
         "files": s.get("files"),
         "version": s.get("version"),
         "ref": s.get("modrinth") or s.get("url") or s.get("path"),
+        "subscribed": bool(s.get("subscribed")),
     }
 
 
@@ -312,6 +336,9 @@ def wb_state_view():
         "sources": [wb_source_view(i, s) for i, s in enumerate(srcs)],
         "included": len(enabled),
         "total": len(srcs),
+        # The Discover nav badge counts real subscriptions only, and
+        # hides at zero (see the slice-4 frontend).
+        "subscription_count": sum(1 for s in srcs if s.get("subscribed")),
         # The merge queue counts pending RPO setting changes (queued
         # pack updates arrive in a later slice and add to this).
         "queue_count": wb_rpo_pending_count(st),
@@ -340,10 +367,16 @@ def wb_add_url(url):
             return None, "Could not reach Modrinth (HTTP %s)." % e.code
         except Exception as e:
             return None, "Could not reach Modrinth (%s)." % e
-        ptype = proj.get("project_type", "")
-        if ptype not in ("resourcepack", "datapack"):
+        if proj.get("project_type") == "resourcepack":
+            ptype = "resourcepack"
+        elif "datapack" in wb_modrinth_newest_loaders(slug):
+            # Data packs report project_type "mod"; only their version
+            # loaders say "datapack" (see wb_modrinth_newest_loaders).
+            ptype = "datapack"
+        else:
             return None, ("That Modrinth project is a %s, not a resource "
-                           "or data pack." % (ptype or "project"))
+                           "or data pack." % (proj.get("project_type")
+                                              or "project"))
         return {"name": proj.get("title") or slug, "modrinth": url,
                 "pack_type": ptype}, None
     if not re.match(r"https?://", url):
@@ -1680,6 +1713,228 @@ def wb_rpo_consume_pending():
     save_state(st)
 
 
+# ------------------------------------------------------------ workbench discover (2.0 slice 4)
+# The Discover tab runs on live Modrinth search. Two facts about
+# Modrinth's API shape this code (both verified live, not assumed):
+#   - Data packs are NOT project_type:datapack. On Modrinth a data pack
+#     is a project of type "mod" carrying the "datapack" category
+#     (Terralith's project_type is "mod"). So the "data packs" facet
+#     is categories:datapack, and "all pack types" is the OR group
+#     [project_type:resourcepack, categories:datapack]. A
+#     project_type:datapack facet matches nothing.
+#   - Shaders are excluded at the facet level: neither facet group can
+#     match a shader project. On top of that, a query mentioning
+#     "shader" returns no results at all — live Modrinth returns ~300
+#     shader-mentioning resource packs for that query, which would
+#     mislead a user looking for shaders in a tab that carries none.
+
+WB_DISCOVER_LIMIT = 20
+WB_DISCOVER_SORTS = ("relevance", "downloads", "follows", "newest",
+                     "updated")
+
+
+def _wb_discover_facets(pack_type, category, version):
+    if pack_type == "resourcepack":
+        type_group = ["project_type:resourcepack"]
+    elif pack_type == "datapack":
+        type_group = ["categories:datapack"]
+    else:
+        type_group = ["project_type:resourcepack", "categories:datapack"]
+    facets = [type_group]
+    if category:
+        facets.append(["categories:" + category])
+    if version:
+        facets.append(["versions:" + version])
+    return facets
+
+
+def wb_discover_search(qs):
+    """Live Modrinth search. qs is the parsed query dict. Returns
+    (payload, error, status)."""
+    query = (qs.get("query") or [""])[0]
+    if len(query) > 200:
+        return None, "search query is too long", 400
+    pack_type = {"all": "all", "RP": "resourcepack", "DP": "datapack",
+                 "resourcepack": "resourcepack",
+                 "datapack": "datapack"}.get(
+                     (qs.get("pack_type") or ["all"])[0])
+    if pack_type is None:
+        return None, "unknown pack_type", 400
+    category = (qs.get("category") or ["all"])[0]
+    if category == "all":
+        category = ""
+    elif not re.fullmatch(r"[a-z0-9_-]+", category):
+        return None, "unknown category", 400
+    version = (qs.get("version") or ["all"])[0]
+    if version == "all":
+        version = ""
+    elif not re.fullmatch(r"[A-Za-z0-9._-]+", version):
+        return None, "unknown version", 400
+    sort = (qs.get("sort") or ["relevance"])[0]
+    if sort not in WB_DISCOVER_SORTS:
+        sort = "relevance"
+    q = query.strip()
+    if "shader" in q.lower():
+        # Discover carries no shaders (see the header comment); a
+        # shader-seeking query has no valid results here.
+        return {"ok": True, "total": 0, "results": [],
+                "shader_query": True}, None, 200
+    facets = _wb_discover_facets(pack_type, category, version)
+    url = (MODRINTH_API + "/search?query="
+           + urllib.parse.quote(q)
+           + "&facets=" + urllib.parse.quote(json.dumps(facets))
+           + "&index=" + sort
+           + "&limit=" + str(WB_DISCOVER_LIMIT))
+    try:
+        req = urllib.request.Request(
+            url, headers={"User-Agent": "packmerge-workbench/2.0"})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            data = json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        return None, "Modrinth search failed (HTTP %s)." % e.code, 502
+    except Exception as e:
+        return None, "Could not reach Modrinth (%s)." % e, 502
+    st = load_state()
+    subscribed_slugs, known_slugs = set(), set()
+    for s in st.get("sources", []):
+        if "modrinth" in s:
+            slug = wb_modrinth_slug(s["modrinth"])
+            if slug:
+                known_slugs.add(slug)
+                if s.get("subscribed"):
+                    subscribed_slugs.add(slug)
+    results = []
+    for h in data.get("hits", []):
+        cats = h.get("categories") or []
+        if "datapack" in cats:
+            ptype = "datapack"
+        elif h.get("project_type") == "resourcepack":
+            ptype = "resourcepack"
+        else:
+            continue  # facets should prevent this; never surface it
+        slug = h.get("slug") or ""
+        results.append({
+            "slug": slug,
+            "title": h.get("title") or slug,
+            "author": h.get("author") or "",
+            "description": h.get("description") or "",
+            "pack_type": ptype,
+            "categories": cats,
+            "versions": h.get("versions") or [],
+            "downloads": h.get("downloads") or 0,
+            "follows": h.get("follows") or 0,
+            "icon_url": h.get("icon_url"),
+            "date_modified": h.get("date_modified"),
+            "subscribed": slug in subscribed_slugs,
+            "in_sources": slug in known_slugs,
+        })
+    return {"ok": True, "total": data.get("total_hits", len(results)),
+            "results": results}, None, 200
+
+
+def wb_discover_download(index, info):
+    """Download a resolved Modrinth file into the scan cache.
+    Returns (downloaded_bool, error_or_None). Mirrors wb_resolve_one's
+    cache naming so scans and builds reuse the file."""
+    st = load_state()
+    srcs = st.get("sources", [])
+    if index < 0 or index >= len(srcs):
+        return False, "no such source"
+    enabled = [j for j, t in enumerate(srcs) if t.get("enabled", True)]
+    if index not in enabled:
+        return False, "source is disabled"
+    ti = enabled.index(index)
+    try:
+        os.makedirs(WB_CACHE_DIR, exist_ok=True)
+        zpath = os.path.join(WB_CACHE_DIR, "%d-%s" % (ti, info["filename"]))
+        if not os.path.exists(zpath):
+            _engine.download_file(info["url"], zpath, info["sha512"])
+    except Exception as e:
+        return False, str(e)[:160]
+    return True, None
+
+
+def wb_discover_subscribe(slug):
+    """Subscribe: resolve + download + add (or flag) a Modrinth pack.
+    Returns (payload, error, status). The download is best-effort: if
+    it fails the source is still added and the next build retries —
+    the response says so honestly instead of failing the subscribe."""
+    slug = (slug or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", slug):
+        return None, "Provide a Modrinth project slug.", 400
+    try:
+        proj = wb_modrinth_project(slug)
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return None, "No Modrinth project found for that link.", 404
+        return None, "Could not reach Modrinth (HTTP %s)." % e.code, 502
+    except Exception as e:
+        return None, "Could not reach Modrinth (%s)." % e, 502
+    if proj.get("project_type") == "resourcepack":
+        ptype = "resourcepack"
+    elif "datapack" in wb_modrinth_newest_loaders(slug):
+        ptype = "datapack"
+    else:
+        return None, ("That Modrinth project is a %s, not a resource "
+                      "or data pack." % (proj.get("project_type")
+                                         or "project")), 400
+    st = load_state()
+    srcs = st.get("sources", [])
+    idx, existing = None, None
+    for i, s in enumerate(srcs):
+        if "modrinth" in s and wb_modrinth_slug(s["modrinth"]) == slug:
+            idx, existing = i, s
+            break
+    if existing is not None and existing.get("subscribed"):
+        return {"ok": True, "already": True}, None, 200
+    try:
+        info = _engine.resolve_modrinth(slug, st.get("mc_version", "latest"))
+    except Exception as e:
+        return None, "Could not resolve that pack (%s)." % e, 502
+    title = proj.get("title") or slug
+    if existing is None:
+        srcs.append({"name": title,
+                     "modrinth": "https://modrinth.com/%s/%s" % (ptype,
+                                                                slug),
+                     "pack_type": ptype,
+                     "subscribed": True,
+                     "subscribed_slug": slug,
+                     "subscribed_version": info["version_number"]})
+        idx = len(srcs) - 1
+    else:
+        # Already a source (added via URL): subscribing flags it for
+        # update checks without duplicating it. The name/ref stay as
+        # the user set them.
+        existing["subscribed"] = True
+        existing["subscribed_slug"] = slug
+        existing["subscribed_version"] = info["version_number"]
+    save_state(st)
+    downloaded, dl_err = wb_discover_download(idx, info)
+    return {"ok": True, "already": False, "downloaded": downloaded,
+            "download_error": dl_err}, None, 200
+
+
+def wb_discover_unsubscribe(slug):
+    """Unsubscribe: remove the subscribed source. Overrides and
+    excludes are left alone (same rule as clear-all): they stay in
+    state and apply again if the source returns."""
+    slug = (slug or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", slug):
+        return None, "Provide a Modrinth project slug.", 400
+    st = load_state()
+    srcs = st.get("sources", [])
+    for i, s in enumerate(srcs):
+        if not s.get("subscribed"):
+            continue
+        if s.get("subscribed_slug") == slug or (
+                "modrinth" in s
+                and wb_modrinth_slug(s["modrinth"]) == slug):
+            srcs.pop(i)
+            save_state(st)
+            return {"ok": True}, None, 200
+    return None, "No subscription found for that pack.", 404
+
+
 # ---------------------------------------------------------------- server
 class Handler(BaseHTTPRequestHandler):
     server_version = "packmerge-web/1.0"
@@ -1791,6 +2046,11 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(wb_scan_conflicts())
         if parsed.path == "/api/wb/rpo":
             return self._json(wb_rpo_scan())
+        if parsed.path == "/api/wb/discover/search":
+            payload, err, status = wb_discover_search(qs)
+            if err:
+                return self._json({"ok": False, "error": err}, status)
+            return self._json(payload)
         if parsed.path == "/api/wb/conflicts/diff":
             q = urllib.parse.parse_qs(parsed.query)
             path = (q.get("path") or [""])[0]
@@ -2026,6 +2286,23 @@ class Handler(BaseHTTPRequestHandler):
                      "error": "source and namespace are required"}, 400)
             payload, err, status = wb_rpo_rename(
                 data["source"], data["namespace"])
+            if err:
+                return self._json({"ok": False, "error": err}, status)
+            return self._json(payload)
+        if parsed.path in ("/api/wb/discover/subscribe",
+                           "/api/wb/discover/unsubscribe"):
+            try:
+                data = json.loads(body)
+            except Exception:
+                return self._json({"ok": False,
+                                   "error": "invalid JSON"}, 400)
+            if not isinstance(data, dict) or not data.get("slug"):
+                return self._json({"ok": False,
+                                   "error": "slug is required"}, 400)
+            if parsed.path.endswith("/subscribe"):
+                payload, err, status = wb_discover_subscribe(data["slug"])
+            else:
+                payload, err, status = wb_discover_unsubscribe(data["slug"])
             if err:
                 return self._json({"ok": False, "error": err}, status)
             return self._json(payload)
