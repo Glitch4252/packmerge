@@ -741,36 +741,36 @@
             </div>
           </div>
 
-          <div class="card" id="textureDetailCard">
-            <h2>Texture comparison <span class="right"><span class="pill open" id="textureStatusPill">Needs decision</span></span></h2>
+          <div class="card" id="textureDetailCard" style="display:none">
+            <h2>Texture comparison <span class="right"><span class="pill" id="textureStatusPill">—</span></span></h2>
             <p class="hint">Select a version to set the winner for this file. Saving the choice as a merge rule applies it to matching files in future builds.</p>
-            <div class="conflict-path" id="texturePath">assets/minecraft/textures/block/grass_block_top.png</div>
+            <div class="conflict-path" id="texturePath">No conflict selected</div>
             <div class="versus">
               <button class="side-pick" data-side="a">
-                <span class="tex"><canvas class="pix" id="texCanvasA" data-seed="faithful-grass" width="16" height="16"></canvas></span>
-                <span class="pn" id="texNameA">Faithful 32×</span>
-                <div class="pd" id="texDetailA">32×32 · crisper, brighter greens · sits above Stay True, so it loses ties</div>
+                <span class="tex"><canvas class="pix" id="texCanvasA" data-seed="side-a" width="16" height="16"></canvas></span>
+                <span class="pn" id="texNameA">—</span>
+                <div class="pd" id="texDetailA">—</div>
                 <span class="win-tag">Winner — click to keep</span>
               </button>
               <span class="vs">vs</span>
-              <button class="side-pick winner" data-side="b">
-                <span class="tex"><canvas class="pix" id="texCanvasB" data-seed="staytrue-grass" width="16" height="16"></canvas></span>
-                <span class="pn" id="texNameB">Stay True</span>
-                <div class="pd" id="texDetailB">16×16 · softer, vanilla-faithful tones · lower in the list, so it wins</div>
+              <button class="side-pick" data-side="b">
+                <span class="tex"><canvas class="pix" id="texCanvasB" data-seed="side-b" width="16" height="16"></canvas></span>
+                <span class="pn" id="texNameB">—</span>
+                <div class="pd" id="texDetailB">—</div>
                 <span class="win-tag">Winner — click to keep</span>
               </button>
             </div>
             <div class="conflict-nav">
               <button class="btn small" id="conflictPrev">← Prev</button>
-              <span class="pos" id="conflictPos">Needs decision · 1 of 3 open</span>
+              <span class="pos" id="conflictPos">No conflict selected</span>
               <button class="btn small" id="conflictSkip">Skip for now</button>
               <button class="btn small accent" id="conflictAccept" style="margin-left:auto">Accept &amp; save rule</button>
             </div>
           </div>
 
-          <div class="card" id="diffCard">
+          <div class="card" id="diffCard" style="display:none">
             <h2>JSON difference</h2>
-            <div class="diff-head"><span class="dp" id="diffPath">assets/minecraft/lang/en_us.json</span><span class="pill open" id="diffStatusPill">3 values differ</span></div>
+            <div class="diff-head"><span class="dp" id="diffPath">No conflict selected</span><span class="pill" id="diffStatusPill">—</span></div>
             <p class="hint" id="diffNote">Keys present in only one source were merged automatically. Only the values below disagree — select the value to keep for each key.</p>
             <div class="diff-table" id="diffTable"></div>
           </div>
@@ -1046,13 +1046,47 @@
         cozy:["#d9a7b0","#e6bcc2","#c78f9a","#f0d3d7","#b57f8c"],
         nullscape:["#4b3a63","#5d4a7a","#3a2d4f","#6f5a8f","#2e2340"]
       };
-      function paint(canvas){
-        var seed=canvas.getAttribute("data-seed");
+      /* Color families, so one render never shows two near-identical
+         icons: palettes in the same family read as the same color at
+         a glance (all four greens, both dark grays, both reds). */
+      var paletteFamily={
+        grass:"green", "faithful-grass":"green", "staytrue-grass":"green",
+        staytrue:"green",
+        ddm:"dark", darkgui:"dark",
+        faithful:"brown", vtweaks:"brown",
+        freshan:"red", incendium:"red",
+        barebones:"tan",
+        terralith:"purple", nullscape:"purple",
+        animplus:"blue",
+        structory:"gray",
+        cozy:"pink"
+      };
+      function paint(canvas, used){
+        var seed=canvas.getAttribute("data-seed")||"";
         /* Known seeds keep their exact palette; anything else (e.g. a
            real source's slug) hash-picks one, so real sources never
            all collapse to the grass fallback. */
         var keys=Object.keys(palettes);
-        var pal=palettes[seed]||palettes[keys[hashStr(seed)%keys.length]];
+        var key=palettes[seed]?seed:keys[hashStr(seed)%keys.length];
+        if(used){
+          /* Within one render, shift forward until the color family
+             is unused (then until the key itself is unused), so no
+             two visible icons land on near-identical palettes. */
+          var fam=paletteFamily[key]||key, start=keys.indexOf(key), i;
+          for(i=0;i<keys.length;i++){
+            var k=keys[(start+i)%keys.length];
+            if(!used.fam[paletteFamily[k]||k]){ key=k; break; }
+          }
+          if(i===keys.length){
+            for(i=0;i<keys.length;i++){
+              var k2=keys[(start+i)%keys.length];
+              if(!used.key[k2]){ key=k2; break; }
+            }
+          }
+          used.fam[paletteFamily[key]||key]=true;
+          used.key[key]=true;
+        }
+        var pal=palettes[key];
         var ctx=canvas.getContext("2d"); if(!ctx) return;
         var w=canvas.width,h=canvas.height,r=rng(seed);
         for(var y=0;y<h;y++)for(var x=0;x<w;x++){
@@ -1063,7 +1097,13 @@
         ctx.fillStyle="rgba(0,0,0,.16)";
         for(var i=0;i<w*h/7;i++){ctx.fillRect(Math.floor(r()*w),Math.floor(r()*h),1,1)}
       }
-      function paintAll(scope){(scope||document).querySelectorAll("canvas.pix").forEach(paint)}
+      function paintAll(scope){(scope||document).querySelectorAll("canvas.pix").forEach(function(c){ paint(c); })}
+      /* Paint a scope with family-unique icons (used for the sources
+         list, where every visible icon must be distinguishable). */
+      function paintAllUnique(scope){
+        var used={fam:{},key:{}};
+        (scope||document).querySelectorAll("canvas.pix").forEach(function(c){ paint(c, used); });
+      }
 
       /* ================= helpers ================= */
       function el(id){return document.getElementById(id)}
@@ -2242,7 +2282,7 @@
       wrap.appendChild(head);
       list.forEach(function(s){ wrap.appendChild(srcRow(s, s._index)); });
     });
-    paintAll(wrap);
+    paintAllUnique(wrap);
     wrap.querySelectorAll("input[data-src]").forEach(function(cb){
       cb.addEventListener("change", function(){
         var s = sources.filter(function(x){ return x.id === cb.getAttribute("data-src"); })[0];
@@ -2304,12 +2344,22 @@
   window.renderSources = renderSourcesReal;
 
   /* ---------- state refresh ---------- */
+  /* One-shot Modrinth icon backfill: sources subscribed before icons
+     were stored have no icon_url, so they fall back to canvas. Fill
+     them once from Modrinth, then refresh so real PNGs appear. The
+     flag guarantees a single attempt per page load even if a source
+     can't be filled (no refresh loop). */
+  var wbBackfillDone = false;
   function refresh(){
     return wbApi("GET", "/api/wb/state").then(function(v){
       var rows = v.sources.map(mapRow);
       sources.length = 0;
       rows.forEach(function(r){ sources.push(r); });
       renderSourcesReal();
+      if(!wbBackfillDone && v.sources.some(function(s){ return s.subscribed && !s.icon_url; })){
+        wbBackfillDone = true;
+        wbApi("POST", "/api/wb/sources/backfill-icons", {}).then(function(){ refresh(); }).catch(function(){});
+      }
       var pn = el("packName"), pd = el("packDesc");
       if(pn && document.activeElement !== pn) pn.value = v.pack_name || "";
       if(pd && document.activeElement !== pd) pd.value = v.description || "";

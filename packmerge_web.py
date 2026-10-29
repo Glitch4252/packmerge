@@ -1946,6 +1946,46 @@ def wb_discover_unsubscribe(slug):
     return None, "No subscription found for that pack.", 404
 
 
+def wb_sources_backfill_icons():
+    """Fill in Modrinth icon URLs for subscribed sources that lack one
+    (subscribed before icons were stored at subscribe time). Runs once
+    on demand from the frontend and persists, so later loads skip
+    filled sources. A failure for one source is skipped, never fails
+    the call; sources that already have an icon_url are untouched.
+    Never called from the state view or on every load."""
+    st = load_state()
+    srcs = st.get("sources", [])
+    filled, skipped = [], []
+    changed = False
+    for s in srcs:
+        if not s.get("subscribed") or s.get("icon_url"):
+            continue
+        slug = s.get("subscribed_slug") or (
+            wb_modrinth_slug(s["modrinth"]) if "modrinth" in s else None)
+        name = s.get("name") or slug or "unnamed"
+        if not slug:
+            skipped.append(name)
+            continue
+        try:
+            req = urllib.request.Request(
+                MODRINTH_API + "/project/" + urllib.parse.quote(slug),
+                headers={"User-Agent": "packmerge-workbench/2.0"})
+            with urllib.request.urlopen(req, timeout=10) as r:
+                icon = json.loads(r.read().decode("utf-8")).get("icon_url")
+        except Exception:
+            skipped.append(name)
+            continue
+        if not icon:
+            skipped.append(name)
+            continue
+        s["icon_url"] = icon
+        filled.append(name)
+        changed = True
+    if changed:
+        save_state(st)
+    return {"ok": True, "filled": filled, "skipped": skipped}
+
+
 # ---------------------------------------------------------------- server
 class Handler(BaseHTTPRequestHandler):
     server_version = "packmerge-web/1.0"
@@ -2317,6 +2357,8 @@ class Handler(BaseHTTPRequestHandler):
             if err:
                 return self._json({"ok": False, "error": err}, status)
             return self._json(payload)
+        if parsed.path == "/api/wb/sources/backfill-icons":
+            return self._json(wb_sources_backfill_icons())
         self.send_error(404)
 
     def do_DELETE(self):
