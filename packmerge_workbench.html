@@ -2604,5 +2604,456 @@
 })();
 
 </script>
+<script>
+/* ================= Packmerge 2.0 — slice 2: real Conflicts =================
+   Replaces the Conflicts tab's demo data with live data from the
+   /api/wb/conflicts endpoints. Other tabs keep their demo behavior.
+   Demo globals reused: el, toast, showView, applyConflictFilters.
+   The demo's row listeners were attached per-element at load, so the
+   rebuilt rows below carry only these handlers. Persistent buttons
+   (bulk actions, texture nav, jump/review) are clone-rebound once to
+   strip the demo listeners that would otherwise act on demo ids. */
+(function(){
+  "use strict";
+  var report = null, selectedPath = null, diffCache = null;
+
+  function esc(s){
+    return String(s == null ? "" : s).replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+  function fmtSize(n){
+    if (n == null) return "";
+    if (n < 1024) return n + " B";
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
+    return (n / 1024 / 1024).toFixed(2) + " MB";
+  }
+  function enc(s){ return encodeURIComponent(s); }
+  function byPath(p){
+    if (!report) return null;
+    for (var i = 0; i < report.conflicts.length; i++)
+      if (report.conflicts[i].path === p) return report.conflicts[i];
+    return null;
+  }
+  function openList(){
+    if (!report) return [];
+    return report.conflicts.filter(function(c){ return c.status === "open"; });
+  }
+  function winnerParty(c){
+    if (c.status === "decided" && c.winner) return c.winner;
+    return c.priority_winner;
+  }
+  function partyLine(c){
+    return c.parties.map(function(p){ return p.name; }).join(" vs ");
+  }
+  function statusPill(c){
+    if (c.status === "open") return '<span class="pill open" data-status-pill>OPEN</span>';
+    if (c.status === "decided") return '<span class="pill done" data-status-pill>RULE SAVED</span>';
+    if (c.status === "priority") return '<span class="pill done" data-status-pill>PRIORITY</span>';
+    if (c.merge_kind === "lang" || c.merge_kind === "tag")
+      return '<span class="pill smart" data-status-pill>UNIONED</span>';
+    if (c.merge_kind === "sounds")
+      return '<span class="pill smart" data-status-pill>COMBINED</span>';
+    return '<span class="pill smart" data-status-pill>MERGED</span>';
+  }
+
+  function post(path, body, done){
+    var xhr = new XMLHttpRequest();
+    xhr.open("POST", path, true);
+    xhr.setRequestHeader("Content-Type", "application/json");
+    xhr.onreadystatechange = function(){
+      if (xhr.readyState !== 4) return;
+      var data = null;
+      try { data = JSON.parse(xhr.responseText); } catch (e) {}
+      done(xhr.status, data);
+    };
+    xhr.send(JSON.stringify(body || {}));
+  }
+  function getJSON(path, done){
+    var xhr = new XMLHttpRequest();
+    xhr.open("GET", path, true);
+    xhr.onreadystatechange = function(){
+      if (xhr.readyState !== 4) return;
+      var data = null;
+      try { data = JSON.parse(xhr.responseText); } catch (e) {}
+      done(xhr.status, data);
+    };
+    xhr.send();
+  }
+  function applyReport(data, msg){
+    report = data; diffCache = null;
+    renderAll();
+    if (msg) toast(msg);
+  }
+  function decide(path, winnerIndex, msg){
+    post("/api/wb/conflicts/decide", {path: path, winner: winnerIndex},
+      function(s, d){
+        if (s === 200) applyReport(d, msg);
+        else toast((d && d.error) || "Could not save the winner.");
+      });
+  }
+  function clearDecision(path){
+    post("/api/wb/conflicts/clear", {path: path}, function(s, d){
+      if (s === 200) applyReport(d, "Decision cleared — list priority applies again.");
+      else toast((d && d.error) || "Could not clear the decision.");
+    });
+  }
+  function applyPriority(path){
+    post("/api/wb/conflicts/priority", {path: path}, function(s, d){
+      if (s === 200) applyReport(d, "List priority applied. The lower source in the list wins this file.");
+      else toast((d && d.error) || "Could not apply list priority.");
+    });
+  }
+
+  function renderQueue(){
+    var q = el("conflictQueue");
+    if (!report){
+      q.innerHTML = '<p class="hint">Scanning sources…</p>';
+      return;
+    }
+    var groups = [
+      {title: "Needs a decision", key: "open"},
+      {title: "Smart-merged — no decision needed", key: "smart"},
+      {title: "Settled by priority or rule", key: "settled"}
+    ];
+    var html = "";
+    if (!report.complete && report.unscanned.length){
+      html += '<p class="hint" style="color:var(--amber)">Some sources could not be read, so this list may be incomplete: ' +
+        report.unscanned.map(function(u){ return esc(u.name); }).join(", ") + ".</p>";
+    }
+    groups.forEach(function(g){
+      var rows = report.conflicts.filter(function(c){
+        return g.key === "settled"
+          ? (c.status === "priority" || c.status === "decided")
+          : c.status === g.key;
+      });
+      html += '<div class="queue-group" data-group><div class="qh"><span>' + g.title +
+        '</span><span class="qc" data-group-count>' + rows.length +
+        ' files</span><span class="line"></span></div>';
+      rows.forEach(function(c){
+        var search = (c.path + " " + partyLine(c)).toLowerCase();
+        var acts = "";
+        if (c.status === "open"){
+          acts = '<button class="btn small" data-wb-review>Review</button>' +
+            '<button class="btn small ghost" data-wb-priority>Apply priority</button>';
+        } else if (c.status === "decided" || c.status === "priority"){
+          acts = '<button class="btn small ghost" data-wb-clear>Clear</button>';
+        }
+        html += '<div class="crow' + (c.path === selectedPath ? " selected" : "") +
+          '" data-row data-id="' + esc(c.path) + '" data-kind="' + c.kind +
+          '" data-status="' + c.status + '" data-namespace="' + esc(c.namespace) +
+          '" data-search="' + esc(search) + '">' +
+          '<span class="pill kind">' + (c.tag ? "JSON · TAG" : c.kind.toUpperCase()) + "</span>" +
+          (c.namespace === "minecraft" ? '<span class="pill vanilla">VANILLA NS</span>' : "") +
+          '<span class="cp"><span class="path">' + esc(c.path) +
+          '</span><div class="parties">' + esc(partyLine(c)) + " · " + esc(c.detail) + "</div></span>" +
+          statusPill(c) + '<span class="acts">' + acts + "</span></div>";
+      });
+      html += "</div>";
+    });
+    if (!report.conflicts.length){
+      html += '<p class="hint">No contested files — every file comes from a single source, or merges automatically with nothing lost.</p>';
+    }
+    q.innerHTML = html;
+    q.querySelectorAll("[data-row]").forEach(function(row){
+      row.addEventListener("click", function(e){
+        if (e.target.closest("button")) return;
+        selectConflict(row.getAttribute("data-id"), false);
+      });
+      var rev = row.querySelector("[data-wb-review]");
+      if (rev) rev.addEventListener("click", function(){
+        selectConflict(row.getAttribute("data-id"), true); });
+      var pri = row.querySelector("[data-wb-priority]");
+      if (pri) pri.addEventListener("click", function(){
+        applyPriority(row.getAttribute("data-id")); });
+      var clr = row.querySelector("[data-wb-clear]");
+      if (clr) clr.addEventListener("click", function(){
+        clearDecision(row.getAttribute("data-id")); });
+    });
+    if (typeof applyConflictFilters === "function") applyConflictFilters();
+  }
+
+  function renderSummary(){
+    if (!report) return;
+    var nums = document.querySelectorAll("#view-conflicts .conflict-stats .stat .n");
+    var vals = [report.counts.open, report.counts.smart,
+                report.counts.priority, report.counts.vanilla];
+    nums.forEach(function(n, i){ if (i < vals.length) n.textContent = String(vals[i]); });
+    var nav = el("navConflictCount");
+    nav.textContent = String(report.counts.open);
+    nav.style.display = report.counts.open ? "" : "none";
+    el("wbOpenCount").textContent = String(report.counts.open);
+    el("jumpOpenBtn").disabled = !report.counts.open;
+    var open = openList();
+    if (open.length){
+      el("wbNextPath").textContent = open[0].path;
+      el("wbNextParties").textContent = partyLine(open[0]) + " · " + open[0].kind;
+    } else {
+      el("wbNextPath").textContent = "Nothing waiting";
+      el("wbNextParties").textContent = "All contested files have a saved decision.";
+    }
+    var note = document.querySelector("#conflictCard .smartnote span");
+    if (note) note.innerHTML = "<b>Everything else is handled:</b> " +
+      report.counts.smart + " file" + (report.counts.smart === 1 ? "" : "s") +
+      " smart-merged automatically and " + report.counts.priority +
+      " settled by list priority, plus " + report.counts.decided +
+      " saved as rules. Comparison, bulk actions, and JSON diffs live on the Conflicts page — the Workbench only tracks status and the next item.";
+    var rulesList = el("rulesList");
+    rulesList.innerHTML = "";
+    report.rules.forEach(function(r){
+      var div = document.createElement("div");
+      div.className = "conflict-path";
+      var label = document.createElement("span");
+      label.textContent = r.path + " → " +
+        (r.method === "winner" ? r.winner : "list priority");
+      var clr = document.createElement("button");
+      clr.className = "btn small ghost"; clr.textContent = "Clear";
+      clr.addEventListener("click", function(){ clearDecision(r.path); });
+      div.appendChild(label); div.appendChild(document.createTextNode(" "));
+      div.appendChild(clr); rulesList.appendChild(div);
+    });
+    el("rulesEmpty").style.display = report.rules.length ? "none" : "";
+  }
+
+  function renderTextureCard(){
+    var card = el("textureDetailCard");
+    var c = selectedPath ? byPath(selectedPath) : null;
+    if (!c || c.kind !== "texture"){ card.style.display = "none"; return; }
+    card.style.display = "";
+    el("texturePath").textContent = c.path;
+    var win = winnerParty(c);
+    var pill = el("textureStatusPill");
+    if (c.status === "open"){
+      pill.className = "pill open"; pill.textContent = "Needs decision";
+    } else {
+      pill.className = "pill done"; pill.textContent = "Resolved";
+    }
+    var versus = card.querySelector(".versus");
+    if (c.parties.length > 2) versus.style.gridTemplateColumns = "1fr";
+    else versus.style.gridTemplateColumns = "";
+    var html = "";
+    c.parties.forEach(function(p, i){
+      var isWin = win && p.index === win.index;
+      var detail = (p.dimensions ? p.dimensions[0] + "×" + p.dimensions[1] + " · " : "") +
+        fmtSize(p.size) + (p.index === c.priority_winner.index
+          ? " · lower in the list, so it wins ties" : "");
+      html += '<button class="side-pick' + (isWin ? " winner" : "") +
+        '" data-wb-side="' + p.index + '"><span class="tex"><img src="/api/wb/file?source=' +
+        p.index + "&path=" + enc(c.path) +
+        '" alt="" style="width:100%;height:auto;image-rendering:pixelated"></span>' +
+        '<span class="pn">' + esc(p.name) + "</span>" +
+        '<div class="pd">' + esc(detail) + "</div>" +
+        '<span class="win-tag">Winner — click to keep</span></button>';
+      if (c.parties.length === 2 && i === 0) html += '<span class="vs">vs</span>';
+    });
+    versus.innerHTML = html;
+    versus.querySelectorAll("[data-wb-side]").forEach(function(b){
+      b.addEventListener("click", function(){
+        decide(c.path, parseInt(b.getAttribute("data-wb-side"), 10),
+          "Winner saved as a merge rule for " + c.path.split("/").pop() + ".");
+      });
+    });
+    var open = openList();
+    var pos = open.map(function(o){ return o.path; }).indexOf(c.path);
+    if (c.status === "open" && pos >= 0)
+      el("conflictPos").textContent = "Needs decision · " + (pos + 1) + " of " + open.length + " open";
+    else if (c.status === "decided")
+      el("conflictPos").textContent = "Resolved · saved as rule";
+    else if (c.status === "priority")
+      el("conflictPos").textContent = "Resolved · list priority applied";
+    else
+      el("conflictPos").textContent = "Smart-merged — no decision needed";
+  }
+
+  function fmtVal(v){
+    var s = (typeof v === "string") ? v : JSON.stringify(v);
+    if (s == null) s = "—";
+    return s.length > 300 ? s.slice(0, 300) + "…" : s;
+  }
+  function renderDiffCard(){
+    var card = el("diffCard");
+    var c = selectedPath ? byPath(selectedPath) : null;
+    if (!c || c.kind !== "json"){ card.style.display = "none"; return; }
+    card.style.display = "";
+    el("diffPath").textContent = c.path;
+    var pill = el("diffStatusPill");
+    if (c.status === "decided" || c.status === "priority"){
+      pill.className = "pill done"; pill.textContent = "Resolved";
+    } else if (c.status === "smart"){
+      pill.className = "pill smart"; pill.textContent = "Merges automatically";
+    } else {
+      pill.className = "pill open";
+      pill.textContent = c.differ_count + " value" + (c.differ_count === 1 ? "" : "s") + " differ";
+    }
+    var note = el("diffNote");
+    if (c.status === "smart"){
+      note.textContent = "This file merges automatically with nothing lost — " + c.detail + ". No decision is needed.";
+    } else {
+      note.textContent = "Keys present in only one source merge automatically. Only the values below actually disagree. Pick one source's whole file below — per-key winners need engine support and are not available yet.";
+    }
+    var table = el("diffTable");
+    table.innerHTML = '<p class="hint">Loading differences…</p>';
+    var old = document.getElementById("wbDiffActions");
+    if (old) old.parentNode.removeChild(old);
+    var path = c.path;
+    getJSON("/api/wb/conflicts/diff?path=" + enc(path), function(s, d){
+      if (s !== 200){
+        table.innerHTML = '<p class="hint">' +
+          esc((d && d.error) || "Could not load differences.") + "</p>";
+        return;
+      }
+      diffCache = d;
+      var cols = "minmax(120px,.8fr)" + " 1fr".repeat(d.parties.length);
+      var html = '<div class="diff-row head" style="grid-template-columns:' + cols +
+        '"><div>Key / property</div>' +
+        d.parties.map(function(p){ return "<div>" + esc(p.name) + "</div>"; }).join("") + "</div>";
+      if (!d.differing.length){
+        html += '<p class="hint">No values actually differ — ' + esc(d.detail) + ".</p>";
+      }
+      d.differing.forEach(function(row){
+        html += '<div class="diff-row" style="grid-template-columns:' + cols +
+          '"><div class="dk">' + esc(row.key) + "</div>" +
+          d.parties.map(function(p){
+            var v = row.values[String(p.index)];
+            return "<div class=\"diff-cell\">" + esc(v === undefined ? "—" : fmtVal(v)) + "</div>";
+          }).join("") + "</div>";
+      });
+      if (d.truncated)
+        html += '<p class="hint">Showing the first 200 differing keys of ' + d.differ_count + ".</p>";
+      table.innerHTML = html;
+      var actions = document.createElement("div");
+      actions.id = "wbDiffActions";
+      actions.style.cssText = "display:flex;gap:8px;flex-wrap:wrap;margin-top:12px";
+      if (d.status !== "smart") {
+      d.parties.forEach(function(p){
+        var b = document.createElement("button");
+        b.className = "btn small accent";
+        b.textContent = "Use " + p.name + "’s version";
+        b.addEventListener("click", function(){
+          decide(path, p.index, "Winner saved as a merge rule for " + path.split("/").pop() + ".");
+        });
+        actions.appendChild(b);
+      });
+      var pri = document.createElement("button");
+      pri.className = "btn small ghost"; pri.textContent = "Apply list priority";
+      pri.addEventListener("click", function(){ applyPriority(path); });
+      actions.appendChild(pri);
+      if (d.status === "decided" || d.status === "priority"){
+        var clr = document.createElement("button");
+        clr.className = "btn small ghost"; clr.textContent = "Clear decision";
+        clr.addEventListener("click", function(){ clearDecision(path); });
+        actions.appendChild(clr);
+      }
+      }
+      card.appendChild(actions);
+    });
+  }
+
+  function renderDetail(){
+    var c = selectedPath ? byPath(selectedPath) : null;
+    if (!c){
+      el("textureDetailCard").style.display = "none";
+      el("diffCard").style.display = "none";
+      return;
+    }
+    if (c.kind === "texture"){ renderTextureCard(); el("diffCard").style.display = "none"; }
+    else { renderDiffCard(); el("textureDetailCard").style.display = "none"; }
+  }
+  function renderAll(){
+    renderQueue(); renderSummary();
+    if (!selectedPath || !byPath(selectedPath)){
+      var open = openList();
+      selectedPath = open.length ? open[0].path
+        : (report && report.conflicts.length ? report.conflicts[0].path : null);
+    }
+    renderDetail();
+  }
+  function selectConflict(path, scroll){
+    selectedPath = path;
+    document.querySelectorAll("#conflictQueue [data-row]").forEach(function(r){
+      r.classList.toggle("selected", r.getAttribute("data-id") === path);
+    });
+    renderDetail();
+    if (scroll){
+      var c = byPath(path);
+      if (c) el(c.kind === "texture" ? "textureDetailCard" : "diffCard")
+        .scrollIntoView({behavior: "smooth", block: "start"});
+    }
+  }
+  function cycleOpen(dir){
+    var open = openList();
+    if (!open.length){ toast("All conflicts are resolved."); return; }
+    var ids = open.map(function(o){ return o.path; });
+    var i = ids.indexOf(selectedPath);
+    if (open.length === 1 && i === 0){
+      toast("This is the only open conflict."); return;
+    }
+    if (i < 0) i = dir > 0 ? -1 : 0;
+    var next = ids[(i + dir + ids.length) % ids.length];
+    selectConflict(next, true);
+    el("conflictPos").textContent = "Needs decision · " + (ids.indexOf(next) + 1) +
+      " of " + ids.length + " open";
+  }
+  function reviewNext(){
+    showView("conflicts");
+    var open = openList();
+    if (open.length) selectConflict(open[0].path, true);
+    else toast("All conflicts are resolved.");
+  }
+  function refreshConflicts(){
+    getJSON("/api/wb/conflicts", function(s, d){
+      if (s === 200) applyReport(d);
+      else {
+        el("conflictQueue").innerHTML = '<p class="hint">Could not scan sources: ' +
+          esc((d && d.error) || ("HTTP " + s)) + "</p>";
+        el("textureDetailCard").style.display = "none";
+        el("diffCard").style.display = "none";
+      }
+    });
+  }
+
+  function rebind(id, fn){
+    var old = el(id);
+    if (!old || !old.parentNode) return;
+    var neo = old.cloneNode(true);
+    old.parentNode.replaceChild(neo, old);
+    neo.addEventListener("click", fn);
+  }
+  rebind("bulkPriorityBtn", function(){
+    if (!openList().length){ toast("No open conflicts to apply priority to."); return; }
+    post("/api/wb/conflicts/priority-all", {}, function(s, d){
+      if (s === 200) applyReport(d, "List priority applied to all open conflicts.");
+      else toast((d && d.error) || "Could not apply list priority.");
+    });
+  });
+  rebind("bulkRuleBtn", function(){
+    if (!openList().length){ toast("No open conflicts to save rules for."); return; }
+    post("/api/wb/conflicts/rules-all", {}, function(s, d){
+      if (s === 200) applyReport(d, "Priority winners saved as merge rules.");
+      else toast((d && d.error) || "Could not save rules.");
+    });
+  });
+  rebind("conflictAccept", function(){
+    var c = selectedPath ? byPath(selectedPath) : null;
+    if (!c || c.kind !== "texture") return;
+    var win = winnerParty(c);
+    if (win) decide(c.path, win.index,
+      "Conflict resolved and saved as a merge rule.");
+  });
+  rebind("conflictPrev", function(){ cycleOpen(-1); });
+  rebind("conflictSkip", function(){ cycleOpen(1); });
+  rebind("jumpOpenBtn", reviewNext);
+  rebind("reviewNextBtn", reviewNext);
+  rebind("openConflictsBtn", function(){ showView("conflicts"); refreshConflicts(); });
+  document.querySelectorAll(".navitem").forEach(function(n){
+    n.addEventListener("click", function(){
+      var v = n.getAttribute("data-view");
+      if (v === "conflicts" || v === "workbench") refreshConflicts();
+    });
+  });
+  window.wbRefreshConflicts = refreshConflicts;
+  refreshConflicts();
+})();
+
+</script>
 </body>
 </html>

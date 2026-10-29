@@ -25,6 +25,8 @@ import zipfile
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import packmerge as _engine  # engine reuse: Modrinth resolve + downloads
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 PACKMERGE_PY = os.path.join(HERE, "packmerge.py")
 STATE_PATH = os.path.join(HERE, "packmerge-gui-state.json")
@@ -384,11 +386,32 @@ def wb_build_manifest():
     Build card's promise.
     """
     st = load_state()
-    enabled = [s for s in st.get("sources", []) if s.get("enabled", True)]
+    all_srcs = st.get("sources", [])
+    enabled_idx = [i for i, s in enumerate(all_srcs)
+                   if s.get("enabled", True)]
+    enabled = [all_srcs[i] for i in enabled_idx]
+    temp_pos = {oi: ti for ti, oi in enumerate(enabled_idx)}
+    enabled_names = set()
+    for oi, s in zip(enabled_idx, enabled):
+        enabled_names.add(s.get("name") or ("source-%d" % oi))
     clean = []
     for s in enabled:
         clean.append({k: s[k] for k in ("name", "modrinth", "url", "path")
                       if k in s})
+    # Translate overrides into the filtered manifest's terms: name refs
+    # stay names (the engine resolves a name to the last same-named
+    # enabled source); 1.x index refs are full-list positions and are
+    # translated to temp indices. Overrides whose winner is disabled
+    # or removed are dropped so the build can't crash on an unknown
+    # source — the decision stays in state and applies again if the
+    # source returns.
+    overrides = {}
+    for p, ref in (st.get("overrides", {}) or {}).items():
+        ref = str(ref)
+        if ref in enabled_names:
+            overrides[p] = ref
+        elif ref.isdigit() and int(ref) in temp_pos:
+            overrides[p] = str(temp_pos[int(ref)])
     return {
         "mc_version": st.get("mc_version", "latest"),
         "pack_name": st.get("pack_name", "") or "packmerge",
@@ -397,7 +420,7 @@ def wb_build_manifest():
         "smart_json_merge": st.get("smart_json_merge", True),
         "merge_respackopts": st.get("merge_respackopts", True),
         "sources": clean,
-        "overrides": st.get("overrides", {}),
+        "overrides": overrides,
         "exclude": st.get("exclude", []),
     }, enabled
 
@@ -527,6 +550,679 @@ def wb_start_run(mode):
     return True, None
 
 
+# ------------------------------------------------------------ workbench conflicts (2.0 slice 2)
+# The Conflicts tab runs on real scans of the enabled sources. A file
+# present in 2+ enabled sources is "contested" and is classified by
+# what the engine would do with it (strategies mirror
+# packmerge.json_merge_dispatch):
+#   - smart-merged automatically: the merge loses nothing (lang key
+#     unions with no differing values, tag values unions, sounds
+#     events combined with no lossy overlap, splices and deep merges
+#     with no scalar conflicts, respackopts namespacing)
+#   - needs a decision: the merge would discard something (binary
+#     files, differing lang keys, lossy sounds/model/blockstate
+#     conflicts, deep scalar conflicts)
+#   - settled by list priority: the user explicitly chose priority
+#     for the file (state "wb_priority_settled")
+#   - decided: the user chose a winner, stored as a normal engine
+#     override (state "overrides", by source name) so workbench builds
+#     and 1.x builds both honor it.
+# Per-key JSON winners are NOT honored by the engine (overrides are
+# file-level only); the diff endpoint reports differing keys honestly
+# and the page offers file-level winners only. Wiring per-key winners
+# needs an engine change (a key_overrides manifest field).
+
+WB_CACHE_DIR = os.path.join(HERE, ".packmerge-cache")
+
+
+def _wb_canon(obj):
+    return json.dumps(obj, sort_keys=True, ensure_ascii=False)
+
+
+def _wb_n(n, one, many):
+    return one if n == 1 else many
+
+
+def wb_merge_kind(path):
+    """Merge strategy for a path, mirroring the engine's
+    json_merge_dispatch. Returns a strategy name or None for plain
+    top-wins."""
+    if os.path.basename(path) == "respackopts.json5":
+        return "respackopts"
+    p = path.lower()
+    base = os.path.basename(p)
+    if p.endswith(".json") and "/lang/" in p:
+        return "lang"
+    if p.endswith(".json") and "/items/" in p:
+        return "item"
+    if p.endswith(".json") and "/models/" in p:
+        return "model"
+    if p.endswith(".json") and "/blockstates/" in p:
+        return "blockstate"
+    if base == "sounds.json":
+        return "sounds"
+    if p.endswith(".json") and "/atlases/" in p:
+        return "atlas"
+    if p.endswith(".json") and "/font/" in p:
+        return "font"
+    if p.endswith(".json") and "/particles/" in p:
+        return "particle"
+    if p.endswith(".mcmeta") or p.endswith(".json"):
+        return "deep"
+    return None
+
+
+def wb_is_tag(path):
+    parts = path.split("/")
+    return (len(parts) >= 4 and parts[0] == "data"
+            and parts[2] == "tags" and path.endswith(".json"))
+
+
+def wb_namespace(path):
+    parts = path.split("/")
+    if len(parts) >= 2 and parts[0] in ("assets", "data"):
+        return parts[1]
+    return ""
+
+
+def wb_zip_names(zpath):
+    """{normalized_name: (arcname, file_size)} for a zip, mirroring
+    the engine's read_pack_zip top-folder unwrap, without reading
+    file contents."""
+    with zipfile.ZipFile(zpath) as z:
+        infos = [i for i in z.infolist()
+                 if not i.filename.endswith("/")
+                 and not i.filename.startswith("__MACOSX/")
+                 and os.path.basename(i.filename) != ".DS_Store"]
+    names = [i.filename for i in infos]
+    if "pack.mcmeta" not in names:
+        tops = {n.split("/")[0] for n in names if "/" in n}
+        if len(tops) == 1:
+            top = next(iter(tops))
+            if "%s/pack.mcmeta" % top in names:
+                return {i.filename[len(top) + 1:]: (i.filename, i.file_size)
+                        for i in infos
+                        if i.filename.startswith(top + "/")
+                        and len(i.filename) > len(top) + 1}
+    return {i.filename: (i.filename, i.file_size) for i in infos}
+
+
+def wb_resolve_one(index):
+    """Resolve one enabled source (full-list index) to a local zip.
+    Path sources resolve directly; remote sources use the engine cache
+    (same naming builds use) and are downloaded on first use.
+    Returns (zip_path, error_or_None)."""
+    st = load_state()
+    srcs = st.get("sources", [])
+    if index < 0 or index >= len(srcs):
+        return None, "no such source"
+    s = srcs[index]
+    if not s.get("enabled", True):
+        return None, "source is disabled"
+    if "path" in s:
+        p = s["path"] if os.path.isabs(s["path"]) else os.path.join(
+            HERE, os.path.expanduser(s["path"]))
+        if not os.path.isfile(p):
+            return None, "Local file not found: %s" % p
+        return p, None
+    enabled = [j for j, t in enumerate(srcs) if t.get("enabled", True)]
+    ti = enabled.index(index)
+    os.makedirs(WB_CACHE_DIR, exist_ok=True)
+    try:
+        if "modrinth" in s:
+            info = _engine.resolve_modrinth(
+                s["modrinth"], st.get("mc_version", "latest"))
+            fname, url, sha = info["filename"], info["url"], info["sha512"]
+        elif "url" in s:
+            url = s["url"]
+            fname = urllib.parse.unquote(
+                url.split("?")[0].rstrip("/").split("/")[-1]) or "pack.zip"
+            sha = None
+        else:
+            return None, "source has no path, url, or modrinth"
+    except Exception as e:
+        return None, "Could not resolve source: %s" % str(e)[:160]
+    zpath = os.path.join(WB_CACHE_DIR, "%d-%s" % (ti, fname))
+    if not os.path.exists(zpath):
+        try:
+            _engine.download_file(url, zpath, sha)
+        except Exception as e:
+            return None, "Could not download source: %s" % str(e)[:160]
+    return zpath, None
+
+
+def wb_scan_sources():
+    """Resolve all enabled sources. Returns (resolved, unscanned);
+    resolved entries are {index, name, zip, names}."""
+    st = load_state()
+    srcs = st.get("sources", [])
+    resolved, unscanned = [], []
+    for i, s in enumerate(srcs):
+        if not s.get("enabled", True):
+            continue
+        name = s.get("name") or ("source-%d" % i)
+        zpath, err = wb_resolve_one(i)
+        if err:
+            unscanned.append({"index": i, "name": name, "error": err})
+            continue
+        try:
+            names = wb_zip_names(zpath)
+        except Exception as e:
+            unscanned.append({"index": i, "name": name,
+                              "error": "Could not read zip: %s"
+                                       % str(e)[:160]})
+            continue
+        resolved.append({"index": i, "name": name, "zip": zpath,
+                         "names": names})
+    return resolved, unscanned
+
+
+def wb_read_entry(res, norm_path):
+    arc = res["names"].get(norm_path, (None, None))[0]
+    if arc is None:
+        return None
+    try:
+        with zipfile.ZipFile(res["zip"]) as z:
+            return z.read(arc)
+    except Exception:
+        return None
+
+
+def wb_read_prefix(res, norm_path, n):
+    arc = res["names"].get(norm_path, (None, None))[0]
+    if arc is None:
+        return None
+    try:
+        with zipfile.ZipFile(res["zip"]) as z:
+            with z.open(arc) as f:
+                return f.read(n)
+    except Exception:
+        return None
+
+
+def wb_png_size(res, norm_path):
+    """(width, height) for a PNG party, or None."""
+    head = wb_read_prefix(res, norm_path, 33)
+    if not head or len(head) < 24 or head[12:16] != b"IHDR":
+        return None
+    return [int.from_bytes(head[16:20], "big"),
+            int.from_bytes(head[20:24], "big")]
+
+
+def wb_scalar_conflicts(indexed, lists_atomic=False):
+    """[{key, values}] for scalar disagreements across indexed
+    [(source_index, parsed_json)] in priority order. Dicts recurse
+    per key; lists union losslessly unless lists_atomic, in which
+    case any canonical list difference is a conflict. Missing keys
+    are not conflicts."""
+    found = []
+
+    def walk(pairs, path):
+        vals = [v for _i, v in pairs]
+        if all(isinstance(v, dict) for v in vals):
+            keys = set()
+            for v in vals:
+                keys.update(v.keys())
+            for k in sorted(keys):
+                sub = [(i, v[k]) for i, v in pairs if k in v]
+                if len(sub) >= 2:
+                    walk(sub, "%s.%s" % (path, k) if path else str(k))
+        elif all(isinstance(v, list) for v in vals):
+            if lists_atomic and len({_wb_canon(v) for v in vals}) > 1:
+                found.append({"key": path or "value",
+                              "values": {str(i): v for i, v in pairs}})
+        else:
+            if len({_wb_canon(v) for v in vals}) > 1:
+                found.append({"key": path or "value",
+                              "values": {str(i): v for i, v in pairs}})
+
+    walk(indexed, "")
+    return found
+
+
+def wb_lang_analysis(indexed):
+    """(differing, total_keys) for lang files. differing entries are
+    {key, values} with values keyed by source index (as strings)."""
+    keys = set()
+    for _i, v in indexed:
+        if isinstance(v, dict):
+            keys.update(v.keys())
+    differing = []
+    for k in sorted(keys):
+        present = [(i, v[k]) for i, v in indexed
+                   if isinstance(v, dict) and k in v]
+        if len({_wb_canon(v) for _i, v in present}) > 1:
+            differing.append({"key": k,
+                              "values": {str(i): v for i, v in present}})
+    return differing, len(keys)
+
+
+def wb_sounds_analysis(indexed):
+    """(lossy_events, total_events) for sounds.json. An event is
+    lossy when a higher version sets replace:true, a version isn't a
+    dict, or a shared non-'sounds' key differs. Sounds-list
+    differences union losslessly and are not lossy."""
+    events = set()
+    for _i, v in indexed:
+        if isinstance(v, dict):
+            events.update(v.keys())
+    lossy = []
+    for ev in sorted(events):
+        present = [(i, v[ev]) for i, v in indexed
+                   if isinstance(v, dict) and ev in v]
+        if len(present) < 2:
+            continue
+        bad = False
+        if not all(isinstance(d, dict) for _i, d in present):
+            if len({_wb_canon(d) for _i, d in present}) > 1:
+                bad = True
+        if not bad:
+            for _i, d in present[1:]:
+                if isinstance(d, dict) and d.get("replace"):
+                    bad = True
+                    break
+        if not bad:
+            keys = set()
+            for _i, d in present:
+                keys.update(k for k in d.keys() if k != "sounds")
+            for k in keys:
+                vals = [(i, d[k]) for i, d in present
+                        if isinstance(d, dict) and k in d]
+                if len({_wb_canon(v) for _i, v in vals}) > 1:
+                    bad = True
+                    break
+        if bad:
+            lossy.append({"key": ev,
+                          "values": {str(i): d for i, d in present}})
+    return lossy, len(events)
+
+
+def wb_model_analysis(indexed):
+    """Predicate collisions + scalar conflicts in non-overrides
+    keys. Returns [{key, values}]."""
+    conflicts = []
+    preds = {}
+    for i, v in indexed:
+        if not isinstance(v, dict):
+            continue
+        for e in v.get("overrides") or []:
+            if isinstance(e, dict):
+                preds.setdefault(_wb_canon(e.get("predicate", {})),
+                                 []).append((i, e.get("model")))
+    for pred, lst in sorted(preds.items()):
+        if len({_wb_canon(m) for _i, m in lst}) > 1:
+            conflicts.append({"key": "overrides[%s]" % pred,
+                              "values": {str(i): m for i, m in lst}})
+    rests = [({k: v for k, v in val.items() if k != "overrides"}
+              if isinstance(val, dict) else val)
+             for _i, val in indexed]
+    conflicts.extend(wb_scalar_conflicts(
+        [(i, r) for (i, _v), r in zip(indexed, rests)]))
+    return conflicts
+
+
+def wb_blockstate_analysis(indexed):
+    """Variant-key disagreements + scalar conflicts elsewhere
+    (multipart lists concatenate losslessly)."""
+    conflicts = []
+    variants = {}
+    for i, v in indexed:
+        if isinstance(v, dict) and isinstance(v.get("variants"), dict):
+            for k, val in v["variants"].items():
+                variants.setdefault(k, []).append((i, val))
+    for k, lst in sorted(variants.items()):
+        if len({_wb_canon(v) for _i, v in lst}) > 1:
+            conflicts.append({"key": "variants.%s" % k,
+                              "values": {str(i): v for i, v in lst}})
+    rests = [({k: v for k, v in val.items()
+               if k not in ("variants", "multipart")}
+              if isinstance(val, dict) else val)
+             for _i, val in indexed]
+    conflicts.extend(wb_scalar_conflicts(
+        [(i, r) for (i, _v), r in zip(indexed, rests)]))
+    return conflicts
+
+
+def wb_analyze_json(path, indexed):
+    """indexed: [(source_index, parsed_json)] in priority order.
+    Returns {merge_kind, lossy, differing, detail, total}. differing
+    entries are {key, values} with values keyed by source index."""
+    kind = wb_merge_kind(path)
+    if kind == "respackopts":
+        return {"merge_kind": kind, "lossy": False, "differing": [],
+                "detail": "configs namespaced by the RPO merger",
+                "total": None}
+    if kind == "lang":
+        differing, total = wb_lang_analysis(indexed)
+        return {"merge_kind": kind, "lossy": bool(differing),
+                "differing": differing,
+                "detail": ("%d keys unioned" % total) if not differing
+                          else ("%d keys unioned, %d %s differ"
+                                % (total, len(differing),
+                                   _wb_n(len(differing), "key", "keys"))),
+                "total": total}
+    if kind == "sounds":
+        differing, total = wb_sounds_analysis(indexed)
+        return {"merge_kind": kind, "lossy": bool(differing),
+                "differing": differing,
+                "detail": ("%d sound events combined" % total)
+                          if not differing else
+                          ("%d sound events combined, %d conflict"
+                           % (total, len(differing))),
+                "total": total}
+    if kind == "model":
+        differing = wb_model_analysis(indexed)
+        return {"merge_kind": kind, "lossy": bool(differing),
+                "differing": differing,
+                "detail": "overrides spliced, no collisions"
+                          if not differing else
+                          "%d %s differ" % (len(differing),
+                                            _wb_n(len(differing),
+                                                  "property", "properties")),
+                "total": None}
+    if kind == "blockstate":
+        differing = wb_blockstate_analysis(indexed)
+        return {"merge_kind": kind, "lossy": bool(differing),
+                "differing": differing,
+                "detail": "variants spliced, no collisions"
+                          if not differing else
+                          "%d %s differ" % (len(differing),
+                                            _wb_n(len(differing),
+                                                  "property", "properties")),
+                "total": None}
+    if kind in ("atlas", "font", "particle"):
+        concat = {"atlas": "sources", "font": "providers",
+                  "particle": "textures"}[kind]
+        rests = [({k: v for k, v in val.items() if k != concat}
+                  if isinstance(val, dict) else val)
+                 for _i, val in indexed]
+        differing = wb_scalar_conflicts(
+            [(i, r) for (i, _v), r in zip(indexed, rests)])
+        return {"merge_kind": kind, "lossy": bool(differing),
+                "differing": differing,
+                "detail": "%s combined" % concat if not differing else
+                          "%d %s differ" % (len(differing),
+                                            _wb_n(len(differing),
+                                                  "property", "properties")),
+                "total": None}
+    if kind == "item":
+        # Conservative: the engine's item-definition splicing keys
+        # entries by threshold/when, so any canonical list difference
+        # is treated as a conflict rather than risking silent loss.
+        differing = wb_scalar_conflicts(indexed, lists_atomic=True)
+        return {"merge_kind": kind, "lossy": bool(differing),
+                "differing": differing,
+                "detail": "entries combined, no conflicts"
+                          if not differing else
+                          "%d %s differ" % (len(differing),
+                                            _wb_n(len(differing),
+                                                  "property", "properties")),
+                "total": None}
+    # deep (other JSON/.mcmeta) and tags: lists union losslessly.
+    differing = wb_scalar_conflicts(indexed)
+    if wb_is_tag(path):
+        vals = set()
+        for _i, v in indexed:
+            if isinstance(v, dict) and isinstance(v.get("values"), list):
+                vals.update(_wb_canon(x) for x in v["values"])
+        detail = ("values unioned, %d total" % len(vals)) if not differing \
+            else "%d %s differ" % (len(differing),
+                                   _wb_n(len(differing), "value", "values"))
+        return {"merge_kind": "tag", "lossy": bool(differing),
+                "differing": differing, "detail": detail,
+                "total": len(vals)}
+    return {"merge_kind": kind, "lossy": bool(differing),
+            "differing": differing,
+            "detail": "merged with no conflicting values"
+                      if not differing else
+                      "%d %s differ" % (len(differing),
+                                            _wb_n(len(differing),
+                                                  "value", "values")),
+            "total": None}
+
+
+def _wb_conflict_row(path, parties_res, base_status, merge_kind, detail,
+                     differ_count):
+    parties = []
+    for res in parties_res:
+        _arc, size = res["names"][path]
+        p = {"index": res["index"], "name": res["name"], "size": size}
+        if path.lower().endswith(".png"):
+            dims = wb_png_size(res, path)
+            if dims:
+                p["dimensions"] = dims
+        parties.append(p)
+    return {
+        "path": path,
+        "kind": "json" if path.lower().endswith((".json", ".mcmeta"))
+                else "texture",
+        "tag": wb_is_tag(path),
+        "namespace": wb_namespace(path),
+        "status": base_status,
+        "merge_kind": merge_kind,
+        "detail": detail,
+        "parties": parties,
+        "priority_winner": parties[-1],
+        "winner": None,
+        "winner_name": None,
+        "differ_count": differ_count or 0,
+    }
+
+
+def wb_scan_conflicts():
+    """Contested-file report for the enabled sources."""
+    st = load_state()
+    overrides = st.get("overrides", {}) or {}
+    settled = set(st.get("wb_priority_settled", []) or [])
+    resolved, unscanned = wb_scan_sources()
+    by_path = {}
+    for res in resolved:
+        for norm in res["names"]:
+            if norm in ("pack.mcmeta", "credits.txt"):
+                continue
+            by_path.setdefault(norm, []).append(res)
+    conflicts = []
+    for path in sorted(by_path):
+        parties = by_path[path]
+        if len(parties) < 2:
+            continue
+        datas = [wb_read_entry(res, path) for res in parties]
+        if any(d is None for d in datas):
+            conflicts.append(_wb_conflict_row(
+                path, parties, "open", None,
+                "could not read from some sources", None))
+            continue
+        if all(d == datas[0] for d in datas):
+            continue  # byte-identical: nothing to decide, nothing lost
+        is_json = path.lower().endswith((".json", ".mcmeta"))
+        if not is_json:
+            conflicts.append(_wb_conflict_row(
+                path, parties, "open", None, "binary files differ", None))
+            continue
+        parsed, bad = [], False
+        for d in datas:
+            try:
+                parsed.append(json.loads(d.decode("utf-8")))
+            except Exception:
+                bad = True
+                parsed.append(None)
+        if bad:
+            conflicts.append(_wb_conflict_row(
+                path, parties, "open", None,
+                "not valid JSON in every source — top-wins applies", None))
+            continue
+        if len({_wb_canon(p) for p in parsed}) == 1:
+            continue  # same JSON, different bytes only
+        indexed = [(res["index"], p) for res, p in zip(parties, parsed)]
+        analysis = wb_analyze_json(path, indexed)
+        if analysis["lossy"]:
+            conflicts.append(_wb_conflict_row(
+                path, parties, "open", analysis["merge_kind"],
+                analysis["detail"], len(analysis["differing"])))
+        else:
+            conflicts.append(_wb_conflict_row(
+                path, parties, "smart", analysis["merge_kind"],
+                analysis["detail"], 0))
+    for c in conflicts:
+        if c["path"] in overrides:
+            c["status"] = "decided"
+            c["winner_name"] = str(overrides[c["path"]])
+            same = [p for p in c["parties"]
+                    if p["name"] == c["winner_name"]]
+            c["winner"] = same[-1] if same else None
+        elif c["path"] in settled:
+            c["status"] = "priority"
+    counts = {"open": 0, "smart": 0, "priority": 0, "decided": 0,
+              "vanilla": 0}
+    for c in conflicts:
+        counts[c["status"]] += 1
+        if c["namespace"] == "minecraft":
+            counts["vanilla"] += 1
+    rules = []
+    for c in conflicts:
+        if c["status"] == "decided":
+            rules.append({"path": c["path"], "method": "winner",
+                          "winner": c["winner_name"]})
+        elif c["status"] == "priority":
+            rules.append({"path": c["path"], "method": "priority",
+                          "winner": None})
+    return {
+        "sources": [{"index": r["index"], "name": r["name"]}
+                    for r in resolved],
+        "unscanned": unscanned,
+        "complete": not unscanned,
+        "counts": counts,
+        "conflicts": conflicts,
+        "rules": rules,
+    }
+
+
+def wb_conflict_diff(path):
+    """(payload, error, status) for a contested JSON file."""
+    if not path or path.startswith("/") or ".." in path.split("/"):
+        return None, "invalid path", 400
+    resolved, _unscanned = wb_scan_sources()
+    parties = [r for r in resolved if path in r["names"]]
+    if len(parties) < 2:
+        return None, "not a contested file", 404
+    if not path.lower().endswith((".json", ".mcmeta")):
+        return None, "not a JSON file", 400
+    parsed = []
+    for res in parties:
+        d = wb_read_entry(res, path)
+        if d is None:
+            return None, "could not read file from a source", 502
+        try:
+            parsed.append(json.loads(d.decode("utf-8")))
+        except Exception:
+            return None, "not valid JSON in every source", 400
+    if len({_wb_canon(p) for p in parsed}) == 1:
+        return None, "no differences", 404
+    indexed = [(res["index"], p) for res, p in zip(parties, parsed)]
+    analysis = wb_analyze_json(path, indexed)
+    st = load_state()
+    overrides = st.get("overrides", {}) or {}
+    settled = set(st.get("wb_priority_settled", []) or [])
+    if path in overrides:
+        status = "decided"
+    elif path in settled:
+        status = "priority"
+    elif analysis["lossy"]:
+        status = "open"
+    else:
+        status = "smart"
+
+    def trim(v):
+        s = json.dumps(v, ensure_ascii=False)
+        return v if len(s) <= 1000 else s[:1000] + "…"
+
+    differing = [{"key": d["key"],
+                  "values": {k: trim(v) for k, v in d["values"].items()}}
+                 for d in analysis["differing"][:200]]
+    return {
+        "path": path,
+        "kind": "json",
+        "merge_kind": analysis["merge_kind"],
+        "tag": wb_is_tag(path),
+        "namespace": wb_namespace(path),
+        "status": status,
+        "parties": [{"index": res["index"], "name": res["name"]}
+                    for res in parties],
+        "priority_winner": {"index": parties[-1]["index"],
+                            "name": parties[-1]["name"]},
+        "differing": differing,
+        "differ_count": len(analysis["differing"]),
+        "truncated": len(analysis["differing"]) > 200,
+        "detail": analysis["detail"],
+        "total": analysis["total"],
+    }, None, 200
+
+
+def wb_mutate_conflict(path, action, winner_index=None):
+    """Validate + apply a conflict mutation. Returns
+    (report, error, status). Actions: decide | clear | priority |
+    priority-all | rules-all. Decisions are stored as engine
+    overrides (by source name); priority settlements in
+    wb_priority_settled. Both persist in shared state."""
+    report = wb_scan_conflicts()
+    st = load_state()
+    if action in ("priority-all", "rules-all"):
+        if action == "priority-all":
+            settled = set(st.get("wb_priority_settled", []) or [])
+            for c in report["conflicts"]:
+                if c["status"] == "open":
+                    settled.add(c["path"])
+            st["wb_priority_settled"] = sorted(settled)
+        else:
+            overrides = st.get("overrides", {}) or {}
+            for c in report["conflicts"]:
+                if c["status"] == "open":
+                    overrides[c["path"]] = c["priority_winner"]["name"]
+            st["overrides"] = overrides
+        save_state(st)
+        return wb_scan_conflicts(), None, 200
+    conf = next((c for c in report["conflicts"] if c["path"] == path),
+                None)
+    if conf is None:
+        return None, "not a contested file", 404
+    overrides = st.get("overrides", {}) or {}
+    settled = set(st.get("wb_priority_settled", []) or [])
+    if action == "decide":
+        if winner_index is None:
+            return None, "winner is required", 400
+        party = next((p for p in conf["parties"]
+                      if p["index"] == winner_index), None)
+        if party is None:
+            return None, "winner does not contain this file", 400
+        # The engine resolves a name to the LAST same-named enabled
+        # source; refuse when that would pick a different source than
+        # the one the user chose.
+        all_enabled = [(i, s) for i, s in enumerate(st.get("sources", []))
+                       if s.get("enabled", True)]
+        last_same = None
+        for i, s in all_enabled:
+            if (s.get("name") or ("source-%d" % i)) == party["name"]:
+                last_same = i
+        if last_same != winner_index:
+            return None, ("That source shares its name with another "
+                           "source; rename it first to decide this "
+                           "file."), 400
+        overrides[path] = party["name"]
+        settled.discard(path)
+    elif action == "clear":
+        overrides.pop(path, None)
+        settled.discard(path)
+    elif action == "priority":
+        overrides.pop(path, None)
+        settled.add(path)
+    else:
+        return None, "unknown action", 400
+    st["overrides"] = overrides
+    st["wb_priority_settled"] = sorted(settled)
+    save_state(st)
+    return wb_scan_conflicts(), None, 200
+
+
 # ---------------------------------------------------------------- server
 class Handler(BaseHTTPRequestHandler):
     server_version = "packmerge-web/1.0"
@@ -634,6 +1330,55 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"path": normalize_path(qs.get("path", [""])[0])})
         if parsed.path == "/api/open-output":
             return self._json(open_output_folder())
+        if parsed.path == "/api/wb/conflicts":
+            return self._json(wb_scan_conflicts())
+        if parsed.path == "/api/wb/conflicts/diff":
+            q = urllib.parse.parse_qs(parsed.query)
+            path = (q.get("path") or [""])[0]
+            payload, err, status = wb_conflict_diff(path)
+            if err:
+                return self._json({"ok": False, "error": err}, status)
+            return self._json(payload)
+        if parsed.path == "/api/wb/file":
+            q = urllib.parse.parse_qs(parsed.query)
+            try:
+                sidx = int((q.get("source") or [""])[0])
+            except ValueError:
+                return self._json({"ok": False,
+                                   "error": "invalid source"}, 400)
+            fpath = (q.get("path") or [""])[0]
+            if (not fpath or fpath.startswith("/")
+                    or ".." in fpath.split("/")):
+                return self._json({"ok": False,
+                                   "error": "invalid path"}, 400)
+            resolved, _u = wb_scan_sources()
+            res = next((r for r in resolved if r["index"] == sidx), None)
+            if res is None:
+                return self._json({"ok": False,
+                                   "error": "source not available"}, 404)
+            if fpath not in res["names"]:
+                return self._json({"ok": False,
+                                   "error": "file not in source"}, 404)
+            data = wb_read_entry(res, fpath)
+            if data is None:
+                return self._json({"ok": False,
+                                   "error": "could not read file"}, 502)
+            ext = fpath.lower().rsplit(".", 1)[-1] if "." in fpath else ""
+            ctype = {".png": "image/png", ".jpg": "image/jpeg",
+                     ".jpeg": "image/jpeg", ".ogg": "audio/ogg",
+                     ".json": "application/json",
+                     ".mcmeta": "application/json",
+                     ".txt": "text/plain",
+                     ".properties": "text/plain",
+                     ".lang": "text/plain"}.get("." + ext,
+                                                 "application/octet-stream")
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(data)
+            return
         self.send_error(404)
 
     def do_POST(self):
@@ -759,6 +1504,37 @@ class Handler(BaseHTTPRequestHandler):
             if not ok:
                 return self._json({"ok": False, "error": err}, 409)
             return self._json({"ok": True})
+        if parsed.path == "/api/wb/conflicts/priority-all":
+            report, err, status = wb_mutate_conflict("", "priority-all")
+            if err:
+                return self._json({"ok": False, "error": err}, status)
+            return self._json(report)
+        if parsed.path == "/api/wb/conflicts/rules-all":
+            report, err, status = wb_mutate_conflict("", "rules-all")
+            if err:
+                return self._json({"ok": False, "error": err}, status)
+            return self._json(report)
+        m = re.match(r"^/api/wb/conflicts/(decide|clear|priority)$",
+                     parsed.path)
+        if m:
+            try:
+                data = json.loads(body)
+            except Exception:
+                return self._json({"ok": False,
+                                   "error": "invalid JSON"}, 400)
+            if not isinstance(data, dict) or not data.get("path"):
+                return self._json({"ok": False,
+                                   "error": "path is required"}, 400)
+            winner = data.get("winner")
+            if winner is not None and not isinstance(winner, int):
+                return self._json({"ok": False,
+                                   "error": "winner must be an index"},
+                                  400)
+            report, err, status = wb_mutate_conflict(
+                data["path"], m.group(1), winner)
+            if err:
+                return self._json({"ok": False, "error": err}, status)
+            return self._json(report)
         self.send_error(404)
 
     def do_DELETE(self):
