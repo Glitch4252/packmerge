@@ -12,6 +12,7 @@ reach it from other devices on your network (e.g. your phone on WiFi).
 """
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -421,6 +422,134 @@ def wb_add_path(path):
             "pack_type": ptype, "files": count}, None
 
 
+def wb_parse_multipart(body, content_type):
+    """Parse a multipart/form-data body (stdlib only, byte-exact).
+
+    Returns a list of (field_name, filename_or_None, content_bytes),
+    or None when the content type is not multipart/form-data.
+    """
+    m = re.search(r"multipart/form-data;\s*boundary=(.+)$",
+                  content_type or "")
+    if not m:
+        return None
+    boundary = m.group(1).strip().strip('"')
+    if not boundary:
+        return None
+    sep = ("--" + boundary).encode("utf-8", "surrogateescape")
+    parts = []
+    for chunk in body.split(sep)[1:]:
+        if chunk.startswith(b"--"):
+            break  # closing boundary; the rest is epilogue
+        if chunk.startswith(b"\r\n"):
+            chunk = chunk[2:]
+        elif chunk.startswith(b"\n"):
+            chunk = chunk[1:]
+        if chunk.endswith(b"\r\n"):
+            chunk = chunk[:-2]
+        elif chunk.endswith(b"\n"):
+            chunk = chunk[:-1]
+        head, found, content = chunk.partition(b"\r\n\r\n")
+        if not found:
+            head, found, content = chunk.partition(b"\n\n")
+            if not found:
+                continue
+        headers = head.decode("utf-8", "replace")
+        name_m = re.search(r'name="([^"]*)"', headers)
+        if not name_m:
+            continue
+        file_m = re.search(r'filename="([^"]*)"', headers)
+        parts.append((name_m.group(1),
+                      file_m.group(1) if file_m else None,
+                      content))
+    return parts
+
+
+def wb_upload_filename(raw):
+    """A browser-supplied filename, made safe for the uploads folder."""
+    base = os.path.basename((raw or "").replace("\\", "/"))
+    base = "".join(c for c in base if c not in '/\\:*?"<>|\x00')
+    return base.strip().strip(".")
+
+
+def wb_sources_upload(body, content_type):
+    """Handle a multipart upload of .zip files into packmerge-uploads/.
+
+    Each file becomes a local path source in the slice-1 shape
+    (wb_add_path does the validation + zip inspection, so pack_type
+    is known at upload time instead of after the first build).
+    Non-zips are skipped per file, never failing the whole batch;
+    a path already in Sources is a per-file duplicate error, the
+    same rule as the slice-1 path add. Returns (payload, status).
+    """
+    parts = wb_parse_multipart(body, content_type)
+    if parts is None:
+        return {"ok": False, "error": "Expected a file upload."}, 400
+    files = [(fn, data) for (name, fn, data) in parts
+             if name == "files" and fn]
+    if not files:
+        return {"ok": False, "error": "No files were uploaded."}, 400
+    os.makedirs(WB_UPLOAD_DIR, exist_ok=True)
+    st = load_state()
+    srcs = st.get("sources", [])
+    results = []
+    for raw_name, data in files:
+        fname = wb_upload_filename(raw_name)
+        if not fname.lower().endswith(".zip"):
+            results.append({"name": raw_name or "file",
+                            "status": "skipped",
+                            "error": "Only .zip files can be added."})
+            continue
+        target = os.path.join(WB_UPLOAD_DIR, fname)
+        # Same name already on disk with different bytes: keep both
+        # (don't clobber the earlier upload); identical bytes reuse
+        # the file, and the duplicate check below still applies.
+        if os.path.isfile(target):
+            try:
+                with open(target, "rb") as f:
+                    same = (hashlib.sha256(f.read()).digest()
+                            == hashlib.sha256(data).digest())
+            except OSError:
+                same = False
+            if not same:
+                stem, ext = os.path.splitext(fname)
+                n = 2
+                while os.path.isfile(os.path.join(
+                        WB_UPLOAD_DIR, "%s (%d)%s" % (stem, n, ext))):
+                    n += 1
+                target = os.path.join(
+                    WB_UPLOAD_DIR, "%s (%d)%s" % (stem, n, ext))
+        if any("path" in s and os.path.normpath(s["path"])
+               == os.path.normpath(normalize_path(target))
+               for s in srcs):
+            results.append({"name": fname, "status": "skipped",
+                            "error": "That pack is already in the list."})
+            continue
+        try:
+            with open(target, "wb") as f:
+                f.write(data)
+        except OSError as e:
+            results.append({"name": fname, "status": "skipped",
+                            "error": "Could not save the file (%s)." % e})
+            continue
+        src, err = wb_add_path(target)
+        if err:
+            try:
+                os.remove(target)
+            except OSError:
+                pass
+            results.append({"name": fname, "status": "skipped",
+                            "error": err})
+            continue
+        srcs.append(src)
+        results.append({"name": src["name"], "status": "added"})
+    st["sources"] = srcs
+    save_state(st)
+    payload = wb_state_view()
+    payload["ok"] = True
+    payload["results"] = results
+    return payload, 200
+
+
 def wb_build_manifest(mode="build"):
     """The manifest the engine runs for a workbench build.
 
@@ -683,6 +812,10 @@ def wb_start_run(mode):
 # needs an engine change (a key_overrides manifest field).
 
 WB_CACHE_DIR = os.path.join(HERE, ".packmerge-cache")
+# Drag-dropped zips live here, NOT in the cache: the engine deletes
+# stale cache entries, but an uploaded source must survive restarts
+# and rebuilds exactly as the user dropped it.
+WB_UPLOAD_DIR = os.path.join(HERE, "packmerge-uploads")
 
 
 def _wb_canon(obj):
@@ -2706,6 +2839,15 @@ class Handler(BaseHTTPRequestHandler):
                 st["output"] = wb_output_filename(st.get("pack_name", ""))
             save_state(st)
             return self._json(wb_state_view())
+        if parsed.path == "/api/wb/sources/upload":
+            # multipart upload, not JSON: the body is raw bytes, so the
+            # route must come before the JSON-only sources add below.
+            if length > 1024 * 1024 * 1024:
+                return self._json({"ok": False,
+                                   "error": "Upload too large."}, 413)
+            payload, status = wb_sources_upload(
+                body, self.headers.get("Content-Type", ""))
+            return self._json(payload, status)
         if parsed.path == "/api/wb/sources":
             try:
                 payload = json.loads(body)

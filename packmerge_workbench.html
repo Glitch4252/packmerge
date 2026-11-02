@@ -175,6 +175,7 @@
       }
       .card > h2 .right{margin-left:auto; text-transform:none; letter-spacing:0}
       .card .hint{color:var(--dim); font-size:13px; margin:0 0 12px}
+      #sourcesCard.dropping{border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft)}
 
       /* ---------- sources ---------- */
       .grouphead{
@@ -635,7 +636,7 @@
             <div>
               <div class="card" id="sourcesCard">
                 <h2>Sources <span class="right"><button class="btn small ghost" id="checkBtn">Check now</button></span></h2>
-                <p class="hint">Drag to reorder priority. Subscribed sources check for updates automatically. Changes are applied on the next build.</p>
+                <p class="hint">Drag to reorder priority, or drop .zip files here to add them. Subscribed sources check for updates automatically. Changes are applied on the next build.</p>
                 <div id="sourceList"></div>
                 <div class="addrow">
                   <button class="btn" id="addUrlBtn">+ Add URL</button>
@@ -2595,6 +2596,98 @@
     go("");
   }
   rewire("addLocalBtn", openWbBrowser);
+
+  /* ---------- drag-and-drop zip upload (Sources card only) ----------
+     Files IN via the browser is the allowed direction: dropped zips
+     upload to /api/wb/sources/upload, which saves them under
+     packmerge-uploads/ and registers them as local path sources.
+     Row-reorder drags carry text, not files, and are ignored here
+     (their own handlers own those events); only a drag carrying
+     files highlights the card or triggers an upload. */
+  var dropCard = el("sourcesCard");
+  if(dropCard){
+    var dropDepth = 0, uploading = false;
+    var dropHint = dropCard.querySelector(".hint");
+    var dropHintOrig = dropHint ? dropHint.textContent : "";
+    function hasFiles(e){
+      if(wbDragId) return false;  // an internal row-reorder drag
+      var dt = e.dataTransfer;
+      if(!dt) return false;
+      var types = dt.types;
+      if(types){
+        for(var i = 0; i < types.length; i++){
+          if(types[i] === "Files") return true;
+        }
+        return false;
+      }
+      return dt.files && dt.files.length > 0;
+    }
+    function setUploading(on){
+      uploading = on;
+      ["addUrlBtn", "addLocalBtn", "discoverBtn", "clearBtn"].forEach(function(id){
+        var b = el(id);
+        if(b) b.disabled = on;
+      });
+      if(dropHint) dropHint.textContent = on ? "Uploading…" : dropHintOrig;
+    }
+    function uploadFiles(files){
+      if(uploading || !files.length) return;
+      var fd = new FormData();
+      for(var i = 0; i < files.length; i++) fd.append("files", files[i]);
+      setUploading(true);
+      fetch("/api/wb/sources/upload", {method: "POST", body: fd}).then(function(r){
+        return r.json().then(function(j){
+          if(!r.ok) throw new Error((j && j.error) || "Upload failed.");
+          return j;
+        });
+      }).then(function(d){
+        setUploading(false);
+        var added = (d.results || []).filter(function(x){ return x.status === "added"; });
+        var skipped = (d.results || []).filter(function(x){ return x.status === "skipped"; });
+        refresh().then(function(){
+          if(added.length && !skipped.length){
+            toast(added.length === 1
+              ? added[0].name + " added to Sources — it merges on the next build."
+              : added.length + " packs added to Sources — they merge on the next build.");
+          }else if(added.length){
+            toast(added.length + " added. Skipped: " + skipped.map(function(x){
+              return x.name + " (" + x.error + ")";
+            }).join(", "));
+          }else if(skipped.length){
+            toast("Nothing added. Skipped: " + skipped.map(function(x){
+              return x.name + " (" + x.error + ")";
+            }).join(", "));
+          }
+        });
+      }).catch(function(e){
+        setUploading(false);
+        toast("Couldn't upload: " + e.message);
+      });
+    }
+    dropCard.addEventListener("dragenter", function(e){
+      if(!hasFiles(e)) return;
+      e.preventDefault();
+      dropDepth++;
+      dropCard.classList.add("dropping");
+    });
+    dropCard.addEventListener("dragover", function(e){
+      if(!hasFiles(e)) return;
+      e.preventDefault();
+      if(e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+    });
+    dropCard.addEventListener("dragleave", function(e){
+      if(!hasFiles(e)) return;
+      dropDepth = Math.max(0, dropDepth - 1);
+      if(!dropDepth) dropCard.classList.remove("dropping");
+    });
+    dropCard.addEventListener("drop", function(e){
+      if(!hasFiles(e)) return;
+      e.preventDefault();
+      dropDepth = 0;
+      dropCard.classList.remove("dropping");
+      uploadFiles(e.dataTransfer.files);
+    });
+  }
 
   /* ---------- output folder Browse buttons (both cards) ---------- */
   document.querySelectorAll("[data-browse-output]").forEach(function(b){
